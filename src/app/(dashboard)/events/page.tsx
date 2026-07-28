@@ -923,17 +923,62 @@ export default function EventsPage() {
                 onClose={() => setCancelTarget(null)}
                 onConfirm={handleConfirmCancelEvent}
             />
-            {/* Delete cancelled event confirmation */}
-            <ConfirmModal
-                isOpen={!!deleteEventTarget}
-                eventType="cancelled"
-                onClose={() => setDeleteEventTarget(null)}
-                onConfirm={handleConfirmDeleteEvent}
-                title="Delete Event?"
-                description="This cancelled event will be permanently deleted and cannot be recovered."
-                confirmLabel="Delete"
-                submittingLabel="Deleting..."
-            />
+            {/* Delete event confirmation modal — dynamic based on status (Figma) */}
+            {(() => {
+                const getEventDeleteDetails = (event: EventType | null) => {
+                    if (!event) return { title: 'Delete Event?', description: '', confirmLabel: 'Delete Event' };
+
+                    if (event.status === 'cancelled') {
+                        return {
+                            title: 'Delete Cancelled Event?',
+                            description: 'This event has already been cancelled. If deleted, it will be permanently removed from both the Admin Dashboard and the Community App.',
+                            confirmLabel: 'Delete Event',
+                        };
+                    }
+
+                    if (event.status === 'draft') {
+                        return {
+                            title: 'Delete Draft Event?',
+                            description: 'This event is currently saved as a draft and is not visible to community members. If you delete this draft, it will be permanently removed from the system.',
+                            confirmLabel: 'Delete Permanently',
+                        };
+                    }
+
+                    const now = new Date();
+                    const eventDate = new Date(event.date);
+                    const isPast = event.status === 'completed' || eventDate < now;
+
+                    if (isPast) {
+                        return {
+                            title: 'Delete Past Event?',
+                            description: 'This event has already been completed. Deleting it will permanently remove the event record from the Admin Dashboard and the Community App, including any associated attendance or event information.',
+                            confirmLabel: 'Delete Permanently',
+                        };
+                    }
+
+                    // Upcoming / published
+                    return {
+                        title: 'Delete Upcoming Event?',
+                        description: 'This event is already published and visible in the Community App. Deleting this event will remove it for all community members and they will no longer be able to view or attend it.',
+                        confirmLabel: 'Delete Event',
+                    };
+                };
+
+                const details = getEventDeleteDetails(deleteEventTarget);
+
+                return (
+                    <ConfirmModal
+                        isOpen={!!deleteEventTarget}
+                        eventType="cancelled"
+                        onClose={() => setDeleteEventTarget(null)}
+                        onConfirm={handleConfirmDeleteEvent}
+                        title={details.title}
+                        description={details.description}
+                        confirmLabel={details.confirmLabel}
+                        submittingLabel="Deleting..."
+                    />
+                );
+            })()}
             {/* Publish draft event confirmation */}
             <ConfirmModal
                 isOpen={!!publishEventTarget}
