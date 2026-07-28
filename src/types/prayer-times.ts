@@ -38,6 +38,7 @@ export interface PrayerTimeResponse {
     id: string;
     date: string; // YYYY-MM-DD
     hijriDate: string | null;
+    hijriDay?: string | null;
     prayers: PrayersData;
     jumuahTimes: JumuahTimeEntry[] | null;
     createdAt: string;
