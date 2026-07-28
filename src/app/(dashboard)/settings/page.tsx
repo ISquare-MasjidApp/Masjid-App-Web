@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import ContentSwitcher from '@/components/ui/ContentSwitcher';
-import { ChevronDownIcon } from '@/components/ui/Icons';
+import { ChevronDownIcon, MapPinIcon } from '@/components/ui/Icons';
 import { getSettings, updateSettings, updatePaymentSettings, connectStripe, disconnectStripe, getStripeStatus } from '@/lib/api/settings';
 import type {
   MasjidSettingsResponse,
@@ -154,6 +154,8 @@ function SettingsPageContent() {
   const [addressLine2, setAddressLine2] = useState('');
   const [city, setCity] = useState('');
   const [postcode, setPostcode] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
   const [mensCapacity, setMensCapacity] = useState('');
   const [womensCapacity, setWomensCapacity] = useState('');
   const [hasWomensArea, setHasWomensArea] = useState(false);
@@ -176,10 +178,9 @@ function SettingsPageContent() {
     wuduFacilities: false,
     washroom: false,
   });
-  const [wuduType, setWuduType] = useState<'Men' | 'Women' | 'Both' | ''>('');
 
   const [hasInfoData, setHasInfoData] = useState(false);
-  const [infoSnapshot, setInfoSnapshot] = useState({ name: '', about: '', phone: '', email: '', website: '', addressLine1: '', addressLine2: '', city: '', postcode: '' });
+  const [infoSnapshot, setInfoSnapshot] = useState({ name: '', about: '', phone: '', email: '', website: '', addressLine1: '', addressLine2: '', city: '', postcode: '', latitude: '', longitude: '' });
 
   const [hasServicesData, setHasServicesData] = useState(false);
   const [servicesSnapshot, setServicesSnapshot] = useState({
@@ -205,6 +206,8 @@ function SettingsPageContent() {
       addressLine2: data.address?.line2 || '',
       city: data.address?.city || '',
       postcode: data.address?.postcode || '',
+      latitude: data.location?.latitude?.toString() || '',
+      longitude: data.location?.longitude?.toString() || '',
     };
     const svc = {
       mensCapacity: data.capacity?.mens?.toString() || '',
@@ -218,6 +221,7 @@ function SettingsPageContent() {
     setEmail(info.email); setWebsite(info.website);
     setAddressLine1(info.addressLine1); setAddressLine2(info.addressLine2);
     setCity(info.city); setPostcode(info.postcode);
+    setLatitude(info.latitude); setLongitude(info.longitude);
     setMensCapacity(svc.mensCapacity); setWomensCapacity(svc.womensCapacity);
     setHasWomensArea(svc.hasWomensArea);
     setServices(svc.services); setFacilities(svc.facilities);
@@ -299,9 +303,10 @@ function SettingsPageContent() {
       phone !== infoSnapshot.phone || email !== infoSnapshot.email ||
       website !== infoSnapshot.website || addressLine1 !== infoSnapshot.addressLine1 ||
       addressLine2 !== infoSnapshot.addressLine2 || city !== infoSnapshot.city ||
-      postcode !== infoSnapshot.postcode
+      postcode !== infoSnapshot.postcode || latitude !== infoSnapshot.latitude ||
+      longitude !== infoSnapshot.longitude
     );
-  }, [hasInfoData, infoSnapshot, name, about, phone, email, website, addressLine1, addressLine2, city, postcode]);
+  }, [hasInfoData, infoSnapshot, name, about, phone, email, website, addressLine1, addressLine2, city, postcode, latitude, longitude]);
 
   const handleSaveInfo = async () => {
     if (!name.trim()) {
@@ -314,10 +319,11 @@ function SettingsPageContent() {
         name: name.trim(), about: about.trim() || null,
         address: { line1: addressLine1.trim() || null, line2: addressLine2.trim() || null, city: city.trim() || null, postcode: postcode.trim() || null, country: 'United Kingdom' },
         contact: { phone: phone.trim() || null, email: email.trim() || null, website: website.trim() || null },
+        location: { latitude: latitude ? parseFloat(latitude) : null, longitude: longitude ? parseFloat(longitude) : null },
         capacity: { mens: mensCapacity ? parseInt(mensCapacity) : null, womens: womensCapacity ? parseInt(womensCapacity) : null },
         services, facilities,
       });
-      const newSnap = { name: name.trim(), about: about.trim(), phone: phone.trim(), email: email.trim(), website: website.trim(), addressLine1: addressLine1.trim(), addressLine2: addressLine2.trim(), city: city.trim(), postcode: postcode.trim() };
+      const newSnap = { name: name.trim(), about: about.trim(), phone: phone.trim(), email: email.trim(), website: website.trim(), addressLine1: addressLine1.trim(), addressLine2: addressLine2.trim(), city: city.trim(), postcode: postcode.trim(), latitude: latitude.trim(), longitude: longitude.trim() };
       setInfoSnapshot(newSnap);
       setHasInfoData(true);
       setToast({ message: 'Masjid information saved successfully', type: 'success' });
@@ -334,6 +340,7 @@ function SettingsPageContent() {
     setEmail(infoSnapshot.email); setWebsite(infoSnapshot.website);
     setAddressLine1(infoSnapshot.addressLine1); setAddressLine2(infoSnapshot.addressLine2);
     setCity(infoSnapshot.city); setPostcode(infoSnapshot.postcode);
+    setLatitude(infoSnapshot.latitude); setLongitude(infoSnapshot.longitude);
   };
 
   // --- Services / Facilities / Capacity module ---
@@ -450,6 +457,33 @@ function SettingsPageContent() {
                   <SettingInput label="Town or City" value={city} onChange={setCity} />
                   <SettingInput label="Post Code" value={postcode} onChange={setPostcode} />
                 </div>
+                <div className="flex gap-[24px]">
+                  <SettingInput label="Latitude" placeholder="e.g. 51.5074" value={latitude} onChange={setLatitude} />
+                  <SettingInput label="Longitude" placeholder="e.g. 0.1278" value={longitude} onChange={setLongitude} />
+                </div>
+                <div className="flex justify-start">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if ('geolocation' in navigator) {
+                        navigator.geolocation.getCurrentPosition(
+                          (pos) => {
+                            setLatitude(pos.coords.latitude.toFixed(6));
+                            setLongitude(pos.coords.longitude.toFixed(6));
+                            setToast({ message: 'Current location fetched successfully', type: 'success' });
+                          },
+                          () => setToast({ message: 'Unable to retrieve location', type: 'error' })
+                        );
+                      } else {
+                        setToast({ message: 'Geolocation is not supported by your browser', type: 'error' });
+                      }
+                    }}
+                    className="h-[40px] px-[16px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#f6f6f6] transition-colors flex items-center gap-[8px] cursor-pointer"
+                  >
+                    <MapPinIcon size={16} className="text-[#667085]" />
+                    <span>Pick Location on Map</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -551,31 +585,11 @@ function SettingsPageContent() {
                   checked={facilities.shoeRacks}
                   onChange={(v) => setFacilities((f) => ({ ...f, shoeRacks: v }))}
                 />
-                <div className="flex flex-col gap-[10px]">
-                  <Checkbox
-                    label="Ablutions rooms"
-                    checked={facilities.wuduFacilities}
-                    onChange={(v) => {
-                      setFacilities((f) => ({ ...f, wuduFacilities: v }));
-                      if (!v) setWuduType('');
-                    }}
-                  />
-                  {facilities.wuduFacilities && (
-                    <div className="relative ml-[28px]">
-                      <select
-                        className="form-field h-[48px] appearance-none text-[14px] text-[#1f1f1f] font-inter font-medium"
-                        value={wuduType}
-                        onChange={(e) => setWuduType(e.target.value as 'Men' | 'Women' | 'Both')}
-                      >
-                        <option value="" disabled className="text-[#9ca3af]">Select access type</option>
-                        <option value="Men" className="text-[#1f1f1f] font-medium">Men</option>
-                        <option value="Women" className="text-[#1f1f1f] font-medium">Women</option>
-                        <option value="Both" className="text-[#1f1f1f] font-medium">Both</option>
-                      </select>
-                      <ChevronDownIcon size={16} className="absolute right-[12px] top-1/2 -translate-y-1/2 text-[var(--neutral-500)] pointer-events-none" />
-                    </div>
-                  )}
-                </div>
+                <Checkbox
+                  label="Ablutions rooms"
+                  checked={facilities.wuduFacilities}
+                  onChange={(v) => setFacilities((f) => ({ ...f, wuduFacilities: v }))}
+                />
                 <Checkbox
                   label="Washroom"
                   checked={facilities.washroom}
