@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import ContentSwitcher from '@/components/ui/ContentSwitcher';
-import { ChevronDownIcon, MapPinIcon } from '@/components/ui/Icons';
-import { getSettings, updateSettings, updatePaymentSettings, connectStripe, disconnectStripe, getStripeStatus } from '@/lib/api/settings';
+import { ChevronDownIcon, MapPinIcon, PlusIcon, EditIcon } from '@/components/ui/Icons';
+import { getSettings, updateSettings, updatePaymentSettings, connectStripe, disconnectStripe, getStripeStatus, getDonationCauses, createDonationCause, updateDonationCause, deleteDonationCause } from '@/lib/api/settings';
 import type {
   MasjidSettingsResponse,
   MasjidServices,
@@ -134,7 +134,7 @@ const Toast = ({ message, type, onClose }: { message: string; type: 'success' | 
 
 function SettingsPageContent() {
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<'masjid' | 'bank'>('masjid');
+  const [activeTab, setActiveTab] = useState<'masjid' | 'bank' | 'quick'>('masjid');
   const [loading, setLoading] = useState(true);
   const [savingInfo, setSavingInfo] = useState(false);
   const [savingServices, setSavingServices] = useState(false);
@@ -143,6 +143,104 @@ function SettingsPageContent() {
   const [disconnectingStripe, setDisconnectingStripe] = useState(false);
   const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Donation Causes / Quick Settings state
+  const [causesList, setCausesList] = useState<{ name: string; visible: boolean }[]>([]);
+  const [loadingCauses, setLoadingCauses] = useState(false);
+  const [isAddingCause, setIsAddingCause] = useState(false);
+  const [newCauseInput, setNewCauseInput] = useState('');
+  const [savingNewCause, setSavingNewCause] = useState(false);
+  const [editingCauseName, setEditingCauseName] = useState<string | null>(null);
+  const [editCauseInput, setEditCauseInput] = useState('');
+  const [savingEditCause, setSavingEditCause] = useState(false);
+  const [deletingCauseName, setDeletingCauseName] = useState<string | null>(null);
+  const [deletingCause, setDeletingCause] = useState(false);
+
+  const fetchDonationCauses = useCallback(async () => {
+    try {
+      setLoadingCauses(true);
+      const causes = await getDonationCauses();
+      const formatted = causes.map(name => ({ name, visible: true }));
+      setCausesList(formatted);
+    } catch (err) {
+      console.error('Failed to load donation causes', err);
+      setToast({ message: 'Failed to load donation causes', type: 'error' });
+    } finally {
+      setLoadingCauses(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'quick') {
+      fetchDonationCauses();
+    }
+  }, [activeTab, fetchDonationCauses]);
+
+  const handleAddCauseSubmit = async () => {
+    if (!newCauseInput.trim()) {
+      setToast({ message: 'Please enter a cause name', type: 'error' });
+      return;
+    }
+    try {
+      setSavingNewCause(true);
+      const updatedCauses = await createDonationCause(newCauseInput.trim());
+      setCausesList(updatedCauses.map(name => ({ name, visible: true })));
+      setNewCauseInput('');
+      setIsAddingCause(false);
+      setToast({ message: 'Donation cause added successfully', type: 'success' });
+    } catch (err: any) {
+      console.error('Failed to add donation cause:', err);
+      setToast({ message: err?.message || 'Failed to add donation cause', type: 'error' });
+    } finally {
+      setSavingNewCause(false);
+    }
+  };
+
+  const handleStartEditCause = (causeName: string) => {
+    setEditingCauseName(causeName);
+    setEditCauseInput(causeName);
+  };
+
+  const handleSaveEditCause = async () => {
+    if (!editingCauseName) return;
+    if (!editCauseInput.trim()) {
+      setToast({ message: 'Please enter a valid cause name', type: 'error' });
+      return;
+    }
+    try {
+      setSavingEditCause(true);
+      const updatedCauses = await updateDonationCause(editingCauseName, editCauseInput.trim());
+      setCausesList(updatedCauses.map(name => ({ name, visible: true })));
+      setEditingCauseName(null);
+      setEditCauseInput('');
+      setToast({ message: 'Donation cause updated successfully', type: 'success' });
+    } catch (err: any) {
+      console.error('Failed to update donation cause:', err);
+      setToast({ message: err?.message || 'Failed to update donation cause', type: 'error' });
+    } finally {
+      setSavingEditCause(false);
+    }
+  };
+
+  const handleConfirmDeleteCause = async () => {
+    if (!deletingCauseName) return;
+    try {
+      setDeletingCause(true);
+      const updatedCauses = await deleteDonationCause(deletingCauseName);
+      setCausesList(updatedCauses.map(name => ({ name, visible: true })));
+      setDeletingCauseName(null);
+      setToast({ message: 'Donation cause deleted successfully', type: 'success' });
+    } catch (err: any) {
+      console.error('Failed to delete donation cause:', err);
+      setToast({ message: err?.message || 'Failed to delete donation cause', type: 'error' });
+    } finally {
+      setDeletingCause(false);
+    }
+  };
+
+  const handleToggleVisible = (index: number) => {
+    setCausesList(prev => prev.map((item, i) => i === index ? { ...item, visible: !item.visible } : item));
+  };
 
   // Masjid details form state
   const [name, setName] = useState('');
@@ -414,9 +512,10 @@ function SettingsPageContent() {
         tabs={[
           { id: 'masjid', label: 'Masjid Details' },
           { id: 'bank', label: 'Bank & Payment Settings' },
+          { id: 'quick', label: 'Quick Settings' },
         ]}
         activeTab={activeTab}
-        onChange={(id) => setActiveTab(id as 'masjid' | 'bank')}
+        onChange={(id) => setActiveTab(id as 'masjid' | 'bank' | 'quick')}
       />
 
       {/* Masjid Details Tab */}
@@ -751,6 +850,219 @@ function SettingsPageContent() {
 
           </div>
         )
+      )}
+
+      {/* Quick Settings / Donation Causes Tab */}
+      {activeTab === 'quick' && (
+        loadingCauses ? (
+          <LoadingSkeleton />
+        ) : (
+          <div className="border border-[#e2e8f0] rounded-[24px] p-[24px] flex flex-col gap-[24px] bg-white">
+            {/* Header section */}
+            <div className="flex items-start justify-between gap-[16px]">
+              <div className="flex flex-col gap-[4px]">
+                <h2 className="font-inter font-semibold text-[20px] text-[#36394a]">Donation Cause</h2>
+                <p className="font-inter text-[15px] text-[#666d80]">
+                  Manage the donation categories displayed in the mobile application
+                </p>
+              </div>
+              {!isAddingCause && (
+                <button
+                  onClick={() => { setIsAddingCause(true); setNewCauseInput(''); }}
+                  className="h-[44px] px-[20px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[15px] hover:bg-[#065d29] transition-colors flex items-center gap-[8px] cursor-pointer shrink-0"
+                >
+                  <PlusIcon size={18} />
+                  <span>Add Cause</span>
+                </button>
+              )}
+            </div>
+
+            {/* Inline Add Cause Form (Image 3 Figma) */}
+            {isAddingCause && (
+              <div className="flex items-center gap-[12px] p-[16px] bg-[#f9fafb] border border-[#e2e8f0] rounded-[16px]">
+                <input
+                  type="text"
+                  placeholder="eg., Masjid Development"
+                  value={newCauseInput}
+                  onChange={(e) => setNewCauseInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddCauseSubmit()}
+                  className="form-field h-[48px] flex-1 text-[15px]"
+                  autoFocus
+                />
+                <button
+                  onClick={handleAddCauseSubmit}
+                  disabled={savingNewCause}
+                  className="h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[15px] hover:bg-[#065d29] transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {savingNewCause ? 'Adding...' : 'Add Cause'}
+                </button>
+                <button
+                  onClick={() => { setIsAddingCause(false); setNewCauseInput(''); }}
+                  disabled={savingNewCause}
+                  className="h-[44px] px-[20px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[15px] hover:bg-white transition-colors cursor-pointer shrink-0"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {/* Cause Items List */}
+            <div className="flex flex-col gap-[12px]">
+              {causesList.length === 0 ? (
+                <div className="text-center py-[48px] text-[#666d80] font-inter">
+                  No donation causes configured. Click &quot;+ Add Cause&quot; above to create one.
+                </div>
+              ) : (
+                causesList.map((item, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-[16px] border border-[#e2e8f0] rounded-[14px] bg-white hover:border-[#cbd5e1] transition-all"
+                  >
+                    {editingCauseName === item.name ? (
+                      /* Inline Edit Cause Form (Image 4 Figma) */
+                      <div className="flex items-center gap-[12px] w-full">
+                        <div className="text-[#94a3b8] cursor-grab shrink-0">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="9" cy="5" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="19" r="1" fill="currentColor"/>
+                            <circle cx="15" cy="5" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="19" r="1" fill="currentColor"/>
+                          </svg>
+                        </div>
+                        <input
+                          type="text"
+                          value={editCauseInput}
+                          onChange={(e) => setEditCauseInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSaveEditCause()}
+                          className="form-field h-[44px] flex-1 text-[15px]"
+                          autoFocus
+                        />
+                        <button
+                          onClick={handleSaveEditCause}
+                          disabled={savingEditCause}
+                          className="h-[40px] px-[20px] bg-[var(--brand)] text-white rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#065d29] transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                        >
+                          {savingEditCause ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => { setEditingCauseName(null); setEditCauseInput(''); }}
+                          disabled={savingEditCause}
+                          className="h-[40px] px-[16px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#f6f6f6] transition-colors cursor-pointer shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      /* Row Display Mode (Image 2 Figma) */
+                      <>
+                        <div className="flex items-center gap-[16px]">
+                          {/* Drag Handle Icon :: */}
+                          <div className="text-[#94a3b8] cursor-grab select-none">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="9" cy="5" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="19" r="1" fill="currentColor"/>
+                              <circle cx="15" cy="5" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="19" r="1" fill="currentColor"/>
+                            </svg>
+                          </div>
+
+                          <span className="font-inter font-semibold text-[16px] text-[#1f1f1f]">
+                            {item.name}
+                          </span>
+
+                          <span className="px-[10px] py-[3px] bg-[rgba(7,119,52,0.1)] text-[var(--brand)] rounded-[6px] font-inter font-semibold text-[11px] uppercase tracking-wider select-none">
+                            ACTIVE
+                          </span>
+                        </div>
+
+                        {/* Right actions: Visible toggle + Edit + Delete */}
+                        <div className="flex items-center gap-[20px]">
+                          <div className="flex items-center gap-[8px]">
+                            <span className="font-inter text-[14px] text-[#666d80] select-none">Visible</span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleVisible(index)}
+                              className={`w-[44px] h-[24px] rounded-full p-[2px] transition-colors duration-200 ease-in-out cursor-pointer ${item.visible ? 'bg-[var(--brand)]' : 'bg-[#e2e8f0]'}`}
+                            >
+                              <div className={`w-[20px] h-[20px] rounded-full bg-white shadow-md transform transition-transform duration-200 ease-in-out ${item.visible ? 'translate-x-[20px]' : 'translate-x-0'}`} />
+                            </button>
+                          </div>
+
+                          <button
+                            onClick={() => handleStartEditCause(item.name)}
+                            className="p-[8px] text-[#667085] hover:text-[var(--brand)] hover:bg-[#f6f6f6] rounded-[8px] transition-colors cursor-pointer"
+                            title="Edit Cause"
+                          >
+                            <EditIcon size={18} />
+                          </button>
+
+                          <button
+                            onClick={() => setDeletingCauseName(item.name)}
+                            className="p-[8px] text-[#dc2626] hover:bg-[#fee2e2] rounded-[8px] transition-colors cursor-pointer"
+                            title="Delete Cause"
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6" />
+                            </svg>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Bottom Save / Discard bar */}
+            <div className="flex justify-end gap-[12px] pt-[8px] border-t border-[#f6f6f6]">
+              <button
+                onClick={() => fetchDonationCauses()}
+                className="h-[44px] px-[24px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#f6f6f6] transition-colors cursor-pointer"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => setToast({ message: 'Donation cause settings saved successfully', type: 'success' })}
+                className="h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#065d29] transition-colors cursor-pointer"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* Delete Donation Cause Confirmation Modal (Image 5 Figma) */}
+      {deletingCauseName && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.5)] p-4">
+          <div className="bg-white rounded-[24px] p-[24px] max-w-[440px] w-full flex flex-col gap-[20px] shadow-xl animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-[16px]">
+              <div className="w-[48px] h-[48px] rounded-full bg-[#fef2f2] flex items-center justify-center shrink-0">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6" />
+                </svg>
+              </div>
+              <div className="flex flex-col gap-[4px]">
+                <h3 className="font-inter font-bold text-[20px] text-[#1f1f1f]">Delete Donation Cause</h3>
+              </div>
+            </div>
+            <p className="font-inter text-[15px] text-[#666d80] leading-relaxed">
+              Are you sure you want to delete <span className="font-semibold text-[#1f1f1f]">&apos;{deletingCauseName}&apos;</span>? This action cannot be undone and will remove the cause from the mobile application.
+            </p>
+            <div className="flex items-center justify-end gap-[12px] pt-[8px]">
+              <button
+                onClick={() => setDeletingCauseName(null)}
+                disabled={deletingCause}
+                className="h-[44px] px-[24px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#f6f6f6] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDeleteCause}
+                disabled={deletingCause}
+                className="h-[44px] px-[24px] bg-[#dc2626] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#b91c1c] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {deletingCause ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
