@@ -2,7 +2,8 @@ import { get, post, put, del } from './client';
 import type { ApiResponse } from '@/types/api';
 import type {
     MasjidSettingsResponse,
-    StripeStatus,
+    StripeSettingsResponse,
+    StripeKeysUpdateRequest,
     UpdateMasjidSettingsRequest,
     UpdatePaymentSettingsRequest,
 } from '@/types/settings';
@@ -22,18 +23,18 @@ export async function updatePaymentSettings(data: UpdatePaymentSettingsRequest):
     return response.data;
 }
 
-export async function connectStripe(): Promise<string> {
-    const response = await get<ApiResponse<{ oauthUrl: string }>>('/admin/settings/stripe/connect');
-    return response.data.oauthUrl;
-}
-
-export async function getStripeStatus(): Promise<StripeStatus> {
-    const response = await get<ApiResponse<StripeStatus>>('/admin/settings/stripe/status');
+export async function getStripeStatus(): Promise<StripeSettingsResponse> {
+    const response = await get<ApiResponse<StripeSettingsResponse>>('/admin/settings/stripe');
     return response.data;
 }
 
-export async function disconnectStripe(): Promise<void> {
-    await del<ApiResponse<unknown>>('/admin/settings/stripe/disconnect');
+export async function saveStripeKeys(data: StripeKeysUpdateRequest): Promise<StripeSettingsResponse> {
+    const response = await put<ApiResponse<StripeSettingsResponse>>('/admin/settings/stripe/keys', data);
+    return response.data;
+}
+
+export async function clearStripeKeys(): Promise<void> {
+    await del<ApiResponse<unknown>>('/admin/settings/stripe/keys');
 }
 
 export interface DonationCauseListResponseData {
