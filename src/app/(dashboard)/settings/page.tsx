@@ -1,15 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import ContentSwitcher from '@/components/ui/ContentSwitcher';
 import { ChevronDownIcon, MapPinIcon, PlusIcon, EditIcon } from '@/components/ui/Icons';
-import { getSettings, updateSettings, updatePaymentSettings, connectStripe, disconnectStripe, getStripeStatus, getDonationCauses, createDonationCause, updateDonationCause, deleteDonationCause } from '@/lib/api/settings';
+import { getSettings, updateSettings, updatePaymentSettings, saveStripeKeys, clearStripeKeys, getDonationCauses, createDonationCause, updateDonationCause, deleteDonationCause } from '@/lib/api/settings';
 import type {
   MasjidSettingsResponse,
   MasjidServices,
   MasjidFacilities,
-  StripeStatus,
+  StripeSettingsResponse,
 } from '@/types/settings';
 
 const Checkbox = ({
@@ -133,15 +132,18 @@ const Toast = ({ message, type, onClose }: { message: string; type: 'success' | 
 };
 
 function SettingsPageContent() {
-  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<'masjid' | 'bank' | 'quick'>('masjid');
   const [loading, setLoading] = useState(true);
   const [savingInfo, setSavingInfo] = useState(false);
   const [savingServices, setSavingServices] = useState(false);
   const [savingPayment, setSavingPayment] = useState(false);
-  const [connectingStripe, setConnectingStripe] = useState(false);
-  const [disconnectingStripe, setDisconnectingStripe] = useState(false);
-  const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
+  const [savingKeys, setSavingKeys] = useState(false);
+  const [removingKeys, setRemovingKeys] = useState(false);
+  const [stripeStatus, setStripeStatus] = useState<StripeSettingsResponse | null>(null);
+  // Stripe key-entry form (secret + webhook secret are write-only; never pre-filled)
+  const [publishableKeyInput, setPublishableKeyInput] = useState('');
+  const [secretKeyInput, setSecretKeyInput] = useState('');
+  const [webhookSecretInput, setWebhookSecretInput] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Donation Causes / Quick Settings state
@@ -188,9 +190,9 @@ function SettingsPageContent() {
       setNewCauseInput('');
       setIsAddingCause(false);
       setToast({ message: 'Donation cause added successfully', type: 'success' });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to add donation cause:', err);
-      setToast({ message: err?.message || 'Failed to add donation cause', type: 'error' });
+      setToast({ message: (err instanceof Error ? err.message : undefined) ||'Failed to add donation cause', type: 'error' });
     } finally {
       setSavingNewCause(false);
     }
@@ -214,9 +216,9 @@ function SettingsPageContent() {
       setEditingCauseName(null);
       setEditCauseInput('');
       setToast({ message: 'Donation cause updated successfully', type: 'success' });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to update donation cause:', err);
-      setToast({ message: err?.message || 'Failed to update donation cause', type: 'error' });
+      setToast({ message: (err instanceof Error ? err.message : undefined) ||'Failed to update donation cause', type: 'error' });
     } finally {
       setSavingEditCause(false);
     }
@@ -230,9 +232,9 @@ function SettingsPageContent() {
       setCausesList(updatedCauses.map(name => ({ name })));
       setDeletingCauseName(null);
       setToast({ message: 'Donation cause deleted successfully', type: 'success' });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to delete donation cause:', err);
-      setToast({ message: err?.message || 'Failed to delete donation cause', type: 'error' });
+      setToast({ message: (err instanceof Error ? err.message : undefined) ||'Failed to delete donation cause', type: 'error' });
     } finally {
       setDeletingCause(false);
     }
@@ -349,43 +351,71 @@ function SettingsPageContent() {
     fetchSettings();
   }, [fetchSettings]);
 
-  // Detect Stripe redirect back after onboarding
-  useEffect(() => {
-    const stripeParam = searchParams.get('stripe');
-    if (stripeParam === 'connected') {
-      setActiveTab('bank');
-      setToast({ message: 'Stripe connected! Syncing account status...', type: 'success' });
-      getStripeStatus().then(setStripeStatus).catch(() => fetchSettings());
-    } else if (stripeParam === 'cancelled') {
-      setActiveTab('bank');
-      setToast({ message: 'Stripe connection cancelled.', type: 'error' });
-    }
-  }, [searchParams, fetchSettings]);
+  const handleSaveKeys = async () => {
+    const publishableKey = publishableKeyInput.trim();
+    const secretKey = secretKeyInput.trim();
+    const webhookSecret = webhookSecretInput.trim();
 
-  const handleConnectStripe = async () => {
+    // Client-side validation (backend enforces too, but fail fast for a better UX).
+    if (!publishableKey.startsWith('pk_')) {
+      setToast({ message: "Publishable key must start with 'pk_'", type: 'error' });
+      return;
+    }
+    if (!(secretKey.startsWith('sk_') || secretKey.startsWith('rk_'))) {
+      setToast({ message: "Secret key must start with 'sk_' (or 'rk_' for a restricted key)", type: 'error' });
+      return;
+    }
+    if (webhookSecret && !webhookSecret.startsWith('whsec_')) {
+      setToast({ message: "Webhook signing secret must start with 'whsec_'", type: 'error' });
+      return;
+    }
+    const modeOf = (k: string) => (k.includes('_live_') ? 'live' : k.includes('_test_') ? 'test' : null);
+    const pubMode = modeOf(publishableKey);
+    const secMode = modeOf(secretKey);
+    if (pubMode && secMode && pubMode !== secMode) {
+      setToast({ message: `Publishable key (${pubMode}) and secret key (${secMode}) are from different modes`, type: 'error' });
+      return;
+    }
+    if ((pubMode ?? secMode) === 'live' &&
+        !window.confirm('You are saving LIVE Stripe keys. Real payments will be processed. Continue?')) {
+      return;
+    }
+
     try {
-      setConnectingStripe(true);
-      const oauthUrl = await connectStripe();
-      window.location.href = oauthUrl;
+      setSavingKeys(true);
+      const status = await saveStripeKeys({
+        publishableKey,
+        secretKey,
+        webhookSecret: webhookSecret || undefined,
+      });
+      setStripeStatus(status);
+      // Never keep the secret / webhook secret around after saving.
+      setSecretKeyInput('');
+      setWebhookSecretInput('');
+      setPublishableKeyInput('');
+      setToast({ message: 'Stripe keys saved successfully', type: 'success' });
     } catch (err) {
-      console.error('Failed to connect Stripe:', err);
-      setToast({ message: 'Failed to start Stripe onboarding. Check configuration.', type: 'error' });
-      setConnectingStripe(false);
+      // Expected user-input error (e.g. bad key) — warn, don't console.error
+      // (console.error triggers Next.js's full-screen dev overlay).
+      console.warn('Failed to save Stripe keys:', err instanceof Error ? err.message : err);
+      setToast({ message: err instanceof Error ? err.message : 'Failed to save Stripe keys', type: 'error' });
+    } finally {
+      setSavingKeys(false);
     }
   };
 
-  const handleDisconnectStripe = async () => {
-    if (!window.confirm('Are you sure you want to disconnect Stripe? Donations will be disabled.')) return;
+  const handleRemoveKeys = async () => {
+    if (!window.confirm('Remove the Stripe keys? Donations will be disabled until keys are added again.')) return;
     try {
-      setDisconnectingStripe(true);
-      await disconnectStripe();
-      setStripeStatus({ accountId: null, connected: false, onboardingComplete: false, acceptingDonations: false, payoutsEnabled: false });
-      setToast({ message: 'Stripe account disconnected.', type: 'success' });
+      setRemovingKeys(true);
+      await clearStripeKeys();
+      setStripeStatus({ connected: false, publishableKey: null, keyMode: null, webhookConfigured: false, keysUpdatedAt: null });
+      setToast({ message: 'Stripe keys removed.', type: 'success' });
     } catch (err) {
-      console.error('Failed to disconnect Stripe:', err);
-      setToast({ message: 'Failed to disconnect Stripe.', type: 'error' });
+      console.warn('Failed to remove Stripe keys:', err instanceof Error ? err.message : err);
+      setToast({ message: err instanceof Error ? err.message : 'Failed to remove Stripe keys.', type: 'error' });
     } finally {
-      setDisconnectingStripe(false);
+      setRemovingKeys(false);
     }
   };
 
@@ -774,73 +804,113 @@ function SettingsPageContent() {
             <h2 className="font-inter font-semibold text-[20px] text-[#36394a]">BANK &amp; PAYMENT SETTINGS</h2>
             <div className="h-[2px] bg-[#f6f6f6] rounded-[2px]" />
 
-            {/* Stripe Connect */}
+            {/* Stripe (Card Payments) */}
             <div className="flex gap-[24px]">
               <div className="flex flex-col gap-[8px] flex-1">
-                <h3 className="font-inter font-semibold text-[18px] text-[#36394a]">Stripe Connect</h3>
+                <h3 className="font-inter font-semibold text-[18px] text-[#36394a]">Stripe (Card Payments)</h3>
                 <p className="text-[14px] text-[#666d80] leading-[1.4] max-w-[300px]">
-                  Connect your Stripe account to accept online donations. Stripe handles all card payments, Apple Pay, and Google Pay securely.
+                  Enter your own Stripe account keys to accept online donations. Payments go directly into your Stripe account. The secret key is stored securely and is never shown again.
                 </p>
               </div>
-              <div className="flex-1">
+              <div className="flex-1 flex flex-col gap-[16px]">
+                {/* Current status */}
                 {stripeStatus?.connected ? (
-                  <div className="flex flex-col gap-[16px]">
-                    {/* Status badges */}
-                    <div className="flex flex-col gap-[10px]">
-                      <div className="flex items-center gap-[8px]">
-                        <div className={`w-[8px] h-[8px] rounded-full ${stripeStatus.acceptingDonations ? 'bg-[var(--brand)]' : 'bg-amber-400'}`} />
-                        <span className="font-inter text-[14px] text-[#4b4b4b]">
-                          Accepting Donations: <strong>{stripeStatus.acceptingDonations ? 'Enabled' : 'Pending'}</strong>
+                  <div className="flex flex-col gap-[10px] p-[16px] bg-[#f9fafb] border border-[#e2e8f0] rounded-[12px]">
+                    <div className="flex items-center gap-[8px]">
+                      <div className="w-[8px] h-[8px] rounded-full bg-[var(--brand)]" />
+                      <span className="font-inter text-[14px] text-[#4b4b4b]">Connected</span>
+                      {stripeStatus.keyMode && (
+                        <span className={`px-[8px] py-[2px] rounded-[6px] font-inter font-semibold text-[11px] uppercase tracking-wider ${stripeStatus.keyMode === 'live' ? 'bg-[rgba(7,119,52,0.1)] text-[var(--brand)]' : 'bg-amber-100 text-amber-700'}`}>
+                          {stripeStatus.keyMode}
                         </span>
-                      </div>
-                      <div className="flex items-center gap-[8px]">
-                        <div className={`w-[8px] h-[8px] rounded-full ${stripeStatus.payoutsEnabled ? 'bg-[var(--brand)]' : 'bg-amber-400'}`} />
-                        <span className="font-inter text-[14px] text-[#4b4b4b]">
-                          Payouts to Bank: <strong>{stripeStatus.payoutsEnabled ? 'Enabled' : 'Pending'}</strong>
-                        </span>
-                      </div>
-                      {!stripeStatus.onboardingComplete && (
-                        <p className="text-[13px] text-amber-600 bg-amber-50 px-[12px] py-[8px] rounded-[8px]">
-                          Onboarding incomplete — complete your Stripe setup to start accepting donations.
-                        </p>
                       )}
                     </div>
-                    {/* Actions */}
-                    <div className="flex gap-[12px]">
-                      {!stripeStatus.onboardingComplete && stripeStatus.connected && (
-                        <a
-                          href="https://dashboard.stripe.com/settings/account"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="h-[40px] px-[20px] bg-[var(--brand)] text-white rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#065d29] transition-colors flex items-center"
-                        >
-                          Complete Setup on Stripe
-                        </a>
-                      )}
-                      <button
-                        onClick={handleDisconnectStripe}
-                        disabled={disconnectingStripe}
-                        className="h-[40px] px-[20px] border border-red-200 text-red-600 rounded-[10px] font-inter font-medium text-[14px] hover:bg-red-50 transition-colors disabled:opacity-50"
-                      >
-                        {disconnectingStripe ? 'Disconnecting...' : 'Disconnect'}
-                      </button>
+                    {stripeStatus.publishableKey && (
+                      <span className="font-inter text-[13px] text-[#666d80] break-all">
+                        Publishable key: <span className="text-[#4b4b4b]">{stripeStatus.publishableKey}</span>
+                      </span>
+                    )}
+                    <div className="flex items-center gap-[8px]">
+                      <div className={`w-[8px] h-[8px] rounded-full ${stripeStatus.webhookConfigured ? 'bg-[var(--brand)]' : 'bg-amber-400'}`} />
+                      <span className="font-inter text-[13px] text-[#4b4b4b]">
+                        Webhook: <strong>{stripeStatus.webhookConfigured ? 'Configured' : 'Not configured'}</strong>
+                      </span>
                     </div>
+                    {stripeStatus.keysUpdatedAt && (
+                      <span className="font-inter text-[12px] text-[#94a3b8]">
+                        Last updated {new Date(stripeStatus.keysUpdatedAt).toLocaleString()}
+                      </span>
+                    )}
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-[12px]">
-                    <div className="flex items-center gap-[8px]">
-                      <div className="w-[8px] h-[8px] rounded-full bg-gray-300" />
-                      <span className="font-inter text-[14px] text-[#666d80]">Not connected</span>
-                    </div>
-                    <button
-                      onClick={handleConnectStripe}
-                      disabled={connectingStripe}
-                      className="w-fit h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#065d29] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {connectingStripe ? 'Redirecting to Stripe...' : 'Connect Stripe Account'}
-                    </button>
+                  <div className="flex items-center gap-[8px]">
+                    <div className="w-[8px] h-[8px] rounded-full bg-gray-300" />
+                    <span className="font-inter text-[14px] text-[#666d80]">Not configured</span>
                   </div>
                 )}
+
+                {/* Key entry / update form */}
+                <div className="flex flex-col gap-[12px]">
+                  <div className="flex flex-col gap-[8px]">
+                    <label className="font-inter font-semibold text-[14px] text-[#4b4b4b]">Publishable Key</label>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      placeholder="pk_live_..."
+                      value={publishableKeyInput}
+                      onChange={(e) => setPublishableKeyInput(e.target.value)}
+                      className="form-field h-[48px]"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-[8px]">
+                    <label className="font-inter font-semibold text-[14px] text-[#4b4b4b]">Secret Key</label>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="sk_live_..."
+                      value={secretKeyInput}
+                      onChange={(e) => setSecretKeyInput(e.target.value)}
+                      className="form-field h-[48px]"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-[8px]">
+                    <label className="font-inter font-semibold text-[14px] text-[#4b4b4b]">
+                      Webhook Signing Secret <span className="font-normal text-[#94a3b8]">(optional)</span>
+                    </label>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="whsec_..."
+                      value={webhookSecretInput}
+                      onChange={(e) => setWebhookSecretInput(e.target.value)}
+                      className="form-field h-[48px]"
+                    />
+                    <p className="font-inter text-[12px] text-[#94a3b8] leading-[1.4]">
+                      In your Stripe Dashboard → Developers → Webhooks, add an endpoint pointing to your
+                      backend&apos;s <code>/api/v1/webhooks/stripe</code> for the events
+                      <code> payment_intent.succeeded</code> and <code> payment_intent.payment_failed</code>,
+                      then paste the signing secret (<code>whsec_…</code>) here.
+                    </p>
+                  </div>
+                  <div className="flex gap-[12px] pt-[4px]">
+                    <button
+                      onClick={handleSaveKeys}
+                      disabled={savingKeys}
+                      className="h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#065d29] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {savingKeys ? 'Saving...' : stripeStatus?.connected ? 'Update Keys' : 'Save Keys'}
+                    </button>
+                    {stripeStatus?.connected && (
+                      <button
+                        onClick={handleRemoveKeys}
+                        disabled={removingKeys}
+                        className="h-[44px] px-[20px] border border-red-200 text-red-600 rounded-[12px] font-inter font-medium text-[16px] hover:bg-red-50 transition-colors disabled:opacity-50"
+                      >
+                        {removingKeys ? 'Removing...' : 'Remove Keys'}
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 

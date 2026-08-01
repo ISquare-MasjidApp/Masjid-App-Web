@@ -50,12 +50,24 @@ export interface MasjidPayment {
     bankSortCode: string | null;
 }
 
-export interface StripeStatus {
-    accountId: string | null;
-    connected: boolean;
-    onboardingComplete: boolean;
-    acceptingDonations: boolean;
-    payoutsEnabled: boolean;
+// Matches backend StripeSettingsResponse. The secret key and webhook secret are
+// write-only and never returned by the API.
+export interface StripeSettingsResponse {
+    connected: boolean;               // true when a secret key is stored
+    publishableKey: string | null;    // public — safe to display
+    keyMode: 'test' | 'live' | null;
+    webhookConfigured: boolean;
+    keysUpdatedAt: string | null;     // ISO timestamp
+}
+
+// Backwards-compatible alias so existing imports keep working.
+export type StripeStatus = StripeSettingsResponse;
+
+// Payload for PUT /admin/settings/stripe/keys
+export interface StripeKeysUpdateRequest {
+    publishableKey: string;
+    secretKey: string;
+    webhookSecret?: string;
 }
 
 export interface MasjidSettingsResponse {
