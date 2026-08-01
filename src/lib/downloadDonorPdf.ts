@@ -71,7 +71,10 @@ export async function downloadDonorPdf(campaign: Campaign): Promise<void> {
     });
 
     // Total row summary
-    const finalY: number = (doc as any).lastAutoTable?.finalY ?? 200;
+    // jspdf-autotable attaches lastAutoTable to the document after rendering,
+    // but does not declare it on the jsPDF type.
+    type WithLastAutoTable = { lastAutoTable?: { finalY?: number } };
+    const finalY: number = (doc as typeof doc & WithLastAutoTable).lastAutoTable?.finalY ?? 200;
     const completedDonations = donations.filter(d => d.status === 'completed');
     const totalRaised = completedDonations.reduce((s, d) => s + (d.amount ?? 0), 0);
 

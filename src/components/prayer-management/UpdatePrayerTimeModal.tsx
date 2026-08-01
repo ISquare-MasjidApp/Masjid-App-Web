@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createPrayerTime, updatePrayerTime, bulkCreatePrayerTimes } from '@/lib/api/prayer-times';
+import { withRequestRef } from '@/lib/api/errors';
 import DateRangePicker from './DateRangePicker';
 import TimePicker from '@/components/ui/TimePicker';
 import ModalCloseButton from '@/components/ui/ModalCloseButton';
@@ -198,7 +199,7 @@ export default function UpdatePrayerTimeModal({ prayerTime, onClose, onSuccess }
 
             onSuccess();
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to save prayer time');
+            setError(withRequestRef(err instanceof Error ? err.message : 'Failed to save prayer time', err));
         } finally {
             setSaving(false);
         }

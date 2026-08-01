@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { ChevronLeftIcon, ChevronDownIcon } from '@/components/ui/Icons';
 import Input from '@/components/ui/Input';
 import { getCampaignById, updateCampaign } from '@/lib/api/campaigns';
+import { withRequestRef } from '@/lib/api/errors';
 import type { Campaign } from '@/types';
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
@@ -58,8 +59,8 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         status: campaign?.status,
       });
       router.push(`/campaigns/${id}`);
-    } catch {
-      setError('Failed to update campaign. Please try again.');
+    } catch (err) {
+      setError(withRequestRef('Failed to update campaign. Please try again.', err));
     } finally {
       setSubmitting(false);
     }

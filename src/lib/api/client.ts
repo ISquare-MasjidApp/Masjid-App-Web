@@ -8,19 +8,48 @@ const API_BASE_URL =
     process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 /**
+ * Correlation id header. The backend reads this into its logging MDC, so every
+ * server-side log line for a request carries the same id — which makes a
+ * user-reported failure traceable end-to-end in Grafana:
+ *
+ *   {container=~"masjid-.*"} | json | request_id="<id>"
+ *
+ * Requests still work without it (nginx mints one when absent); sending it from
+ * here means the browser knows the id too, so it can be surfaced in errors.
+ */
+export const REQUEST_ID_HEADER = 'X-Request-Id';
+
+function newRequestId(): string {
+    // randomUUID needs a secure context; fall back for plain-http local setups.
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+/**
  * Custom error class for API errors
  */
 export class ApiError extends Error {
     code: string;
     status: number;
     details?: Record<string, string>;
+    /** Correlation id of the failed request — quote this when reporting a bug. */
+    requestId?: string;
 
-    constructor(status: number, code: string, message: string, details?: Record<string, string>) {
+    constructor(
+        status: number,
+        code: string,
+        message: string,
+        details?: Record<string, string>,
+        requestId?: string
+    ) {
         super(message);
         this.name = 'ApiError';
         this.status = status;
         this.code = code;
         this.details = details;
+        this.requestId = requestId;
     }
 }
 
@@ -92,8 +121,13 @@ async function request<T>(
     options: RequestInit = {},
     retry = true
 ): Promise<T> {
+    // A fresh id per HTTP attempt — a 401 retry below is a separate request and
+    // gets its own, so each one is individually traceable server-side.
+    const requestId = newRequestId();
+
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        [REQUEST_ID_HEADER]: requestId,
         ...(options.headers as Record<string, string>),
     };
 
@@ -103,7 +137,7 @@ async function request<T>(
         headers['Authorization'] = `Bearer ${token}`;
     }
 
-    console.log(`[API Request] ${options.method || 'GET'} ${endpoint}`);
+    console.log(`[API Request] ${options.method || 'GET'} ${endpoint} [${requestId}]`);
 
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         ...options,
@@ -111,7 +145,7 @@ async function request<T>(
         credentials: 'include', // Send HttpOnly refresh token cookie
     });
 
-    console.log(`[API Response] ${options.method || 'GET'} ${endpoint} -> ${response.status}`);
+    console.log(`[API Response] ${options.method || 'GET'} ${endpoint} -> ${response.status} [${requestId}]`);
 
     // Handle 401 — try refreshing the token once
     if (response.status === 401 && retry) {
@@ -133,7 +167,8 @@ async function request<T>(
             response.status,
             errorBody?.error?.code || 'UNKNOWN_ERROR',
             errorBody?.error?.message || 'An unexpected error occurred',
-            errorBody?.error?.details
+            errorBody?.error?.details,
+            response.headers.get(REQUEST_ID_HEADER) ?? requestId
         );
     }
 
@@ -187,7 +222,13 @@ async function requestFormData<T>(
     formData: FormData,
     retry = true
 ): Promise<T> {
-    const headers: Record<string, string> = {};
+    const requestId = newRequestId();
+
+    // Content-Type is deliberately omitted so the browser sets the multipart
+    // boundary itself.
+    const headers: Record<string, string> = {
+        [REQUEST_ID_HEADER]: requestId,
+    };
 
     // Attach access token if available
     const token = getAccessToken();
@@ -195,7 +236,7 @@ async function requestFormData<T>(
         headers['Authorization'] = `Bearer ${token}`;
     }
 
-    console.log(`[API Request FormData] ${method} ${endpoint}`);
+    console.log(`[API Request FormData] ${method} ${endpoint} [${requestId}]`);
 
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method,
@@ -204,7 +245,7 @@ async function requestFormData<T>(
         credentials: 'include',
     });
 
-    console.log(`[API Response FormData] ${method} ${endpoint} -> ${response.status}`);
+    console.log(`[API Response FormData] ${method} ${endpoint} -> ${response.status} [${requestId}]`);
 
     // Handle 401 — try refreshing the token once
     if (response.status === 401 && retry) {
@@ -223,7 +264,8 @@ async function requestFormData<T>(
             response.status,
             errorBody?.error?.code || 'UNKNOWN_ERROR',
             errorBody?.error?.message || 'An unexpected error occurred',
-            errorBody?.error?.details
+            errorBody?.error?.details,
+            response.headers.get(REQUEST_ID_HEADER) ?? requestId
         );
     }
 

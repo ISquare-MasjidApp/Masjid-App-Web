@@ -11,6 +11,7 @@ import {
     changeAnnouncementStatus,
     type CreateAnnouncementData,
 } from '@/lib/api/announcements';
+import { messageOf, withRequestRef } from '@/lib/api/errors';
 
 interface AddAnnouncementModalProps {
     isOpen: boolean;
@@ -165,8 +166,8 @@ export default function AddAnnouncementModal({ isOpen, onClose, announcement, on
             try {
                 await performUpdate();
                 onClose();
-            } catch (err: any) {
-                setError(err?.message || 'An error occurred while saving the announcement.');
+            } catch (err) {
+                setError(withRequestRef(messageOf(err, 'An error occurred while saving the announcement.'), err));
                 console.error('Failed to save announcement:', err);
             } finally {
                 setIsSaving(false);
@@ -203,8 +204,8 @@ export default function AddAnnouncementModal({ isOpen, onClose, announcement, on
             };
             await createAnnouncement(data);
             onClose();
-        } catch (err: any) {
-            setError(err?.message || 'An error occurred while saving the announcement.');
+        } catch (err) {
+            setError(withRequestRef(messageOf(err, 'An error occurred while saving the announcement.'), err));
             console.error('Failed to save announcement:', err);
         } finally {
             setIsSaving(false);

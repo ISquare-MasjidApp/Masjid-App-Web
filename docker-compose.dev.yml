@@ -1,7 +1,7 @@
 services:
   app:
     image: ${DOCKER_USERNAME}/masjid-app-frontend:dev-latest
-    container_name: masjid-frontend-dev
+    container_name: masjid-frontend
     restart: always
     ports:
       - "3000:3000"
