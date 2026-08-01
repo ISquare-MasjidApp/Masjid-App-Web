@@ -1,21 +1,54 @@
+# Single environment, single VPS — this is the only compose file for the web app.
+#
+# Consolidated from the former docker-compose.dev.yml, which despite the name
+# was the file that actually deployed. The old docker-compose.yml was a
+# local-only variant that bind-mounted ./ over /app; that is deliberately gone,
+# because on the VPS there is no source tree to mount and it would have
+# shadowed the built application.
+
 services:
-  frontend:
+  app:
+    # `image` is what the VPS pulls. `build` is here so `docker compose build`
+    # or `up --build` still works locally against the same tag.
+    image: ${DOCKER_USERNAME}/masjid-app-frontend:${FRONTEND_TAG:-dev-latest}
     build:
       context: .
       dockerfile: Dockerfile.dev
+      args:
+        BACKEND_API_URL: ${BACKEND_API_URL:-http://72.62.6.65:8080}
+
     container_name: masjid-frontend
+    restart: always
+
     ports:
       - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/.next
-    environment:
-      - NODE_ENV=development
-      - BACKEND_API_URL=http://masjid-backend:8080
-    networks:
-      - masjid-app-backend_masjid-network
 
-networks:
-  masjid-app-backend_masjid-network:
-    external: true
+    environment:
+      - NODE_ENV=production
+      # Consumed by next.config.ts rewrites to proxy /api/v1/* to the backend.
+      # Currently the VPS public IP, so requests leave and re-enter the host.
+      # To keep it internal instead, join the backend's network (see below) and
+      # set this to http://masjid-backend:8080.
+      - BACKEND_API_URL=${BACKEND_API_URL:-http://72.62.6.65:8080}
+
+    # No network block on purpose: the frontend reaches the backend over the
+    # public IP above, so it does not need to share a Docker network. To switch
+    # to internal DNS, uncomment below and confirm the name with
+    # `docker network ls | grep masjid` — it is <backend-project>_masjid-network.
+    #
+    # networks:
+    #   - masjid-network
+    #
+    # networks:
+    #   masjid-network:
+    #     external: true
+    #     name: masjid-app_masjid-network
+
+    # Caps the on-disk json-file buffer. Without this the frontend's logs grow
+    # unbounded; Alloy has already shipped them to Loki, which keeps the full
+    # history. See docs/logging.md in the backend repo.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
