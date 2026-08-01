@@ -40,7 +40,6 @@ export async function downloadDonorPdf(campaign: Campaign): Promise<void> {
     const rows = donations.map((d, i) => [
       i + 1,
       d.isAnonymous ? 'Anonymous' : (d.donorName ?? '—'),
-      d.isAnonymous ? '—' : (d.donorEmail ?? '—'),
       fmt(d.amount),
       d.coverFee ? fmt(d.totalCharged ?? d.amount) : '—',
       d.status.charAt(0).toUpperCase() + d.status.slice(1),
@@ -49,7 +48,7 @@ export async function downloadDonorPdf(campaign: Campaign): Promise<void> {
 
     autoTable(doc, {
       startY: 70,
-      head: [['#', 'Donor Name', 'Email', 'Amount', 'Total Charged', 'Status', 'Date']],
+      head: [['#', 'Donor Name', 'Amount', 'Total Charged', 'Status', 'Date']],
       body: rows,
       headStyles: {
         fillColor: [16, 185, 129],
