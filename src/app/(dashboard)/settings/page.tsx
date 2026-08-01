@@ -145,7 +145,7 @@ function SettingsPageContent() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Donation Causes / Quick Settings state
-  const [causesList, setCausesList] = useState<{ name: string; visible: boolean }[]>([]);
+  const [causesList, setCausesList] = useState<{ name: string }[]>([]);
   const [loadingCauses, setLoadingCauses] = useState(false);
   const [isAddingCause, setIsAddingCause] = useState(false);
   const [newCauseInput, setNewCauseInput] = useState('');
@@ -160,7 +160,7 @@ function SettingsPageContent() {
     try {
       setLoadingCauses(true);
       const causes = await getDonationCauses();
-      const formatted = causes.map(name => ({ name, visible: true }));
+      const formatted = causes.map(name => ({ name }));
       setCausesList(formatted);
     } catch (err) {
       console.error('Failed to load donation causes', err);
@@ -184,7 +184,7 @@ function SettingsPageContent() {
     try {
       setSavingNewCause(true);
       const updatedCauses = await createDonationCause(newCauseInput.trim());
-      setCausesList(updatedCauses.map(name => ({ name, visible: true })));
+      setCausesList(updatedCauses.map(name => ({ name })));
       setNewCauseInput('');
       setIsAddingCause(false);
       setToast({ message: 'Donation cause added successfully', type: 'success' });
@@ -210,7 +210,7 @@ function SettingsPageContent() {
     try {
       setSavingEditCause(true);
       const updatedCauses = await updateDonationCause(editingCauseName, editCauseInput.trim());
-      setCausesList(updatedCauses.map(name => ({ name, visible: true })));
+      setCausesList(updatedCauses.map(name => ({ name })));
       setEditingCauseName(null);
       setEditCauseInput('');
       setToast({ message: 'Donation cause updated successfully', type: 'success' });
@@ -227,7 +227,7 @@ function SettingsPageContent() {
     try {
       setDeletingCause(true);
       const updatedCauses = await deleteDonationCause(deletingCauseName);
-      setCausesList(updatedCauses.map(name => ({ name, visible: true })));
+      setCausesList(updatedCauses.map(name => ({ name })));
       setDeletingCauseName(null);
       setToast({ message: 'Donation cause deleted successfully', type: 'success' });
     } catch (err: any) {
@@ -236,10 +236,6 @@ function SettingsPageContent() {
     } finally {
       setDeletingCause(false);
     }
-  };
-
-  const handleToggleVisible = (index: number) => {
-    setCausesList(prev => prev.map((item, i) => i === index ? { ...item, visible: !item.visible } : item));
   };
 
   // Masjid details form state
@@ -971,19 +967,8 @@ function SettingsPageContent() {
                           </span>
                         </div>
 
-                        {/* Right actions: Visible toggle + Edit + Delete */}
-                        <div className="flex items-center gap-[20px]">
-                          <div className="flex items-center gap-[8px]">
-                            <span className="font-inter text-[14px] text-[#666d80] select-none">Visible</span>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleVisible(index)}
-                              className={`w-[44px] h-[24px] rounded-full p-[2px] transition-colors duration-200 ease-in-out cursor-pointer ${item.visible ? 'bg-[var(--brand)]' : 'bg-[#e2e8f0]'}`}
-                            >
-                              <div className={`w-[20px] h-[20px] rounded-full bg-white shadow-md transform transition-transform duration-200 ease-in-out ${item.visible ? 'translate-x-[20px]' : 'translate-x-0'}`} />
-                            </button>
-                          </div>
-
+                        {/* Right actions: Edit + Delete */}
+                        <div className="flex items-center gap-[12px]">
                           <button
                             onClick={() => handleStartEditCause(item.name)}
                             className="p-[8px] text-[#667085] hover:text-[var(--brand)] hover:bg-[#f6f6f6] rounded-[8px] transition-colors cursor-pointer"
