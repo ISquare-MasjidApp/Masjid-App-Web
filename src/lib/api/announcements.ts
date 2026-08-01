@@ -1,4 +1,4 @@
-import { get, post, put, del } from './client';
+import { get, post, put, patch, del } from './client';
 import type { Announcement } from '@/types';
 import type { ApiResponse } from '@/types/api';
 import type { PaginatedResponse } from './events';
@@ -67,7 +67,7 @@ export async function updateAnnouncement(id: string, data: UpdateAnnouncementDat
  * Change the status of an announcement
  */
 export async function changeAnnouncementStatus(id: string, status: string): Promise<Announcement> {
-    const response = await put<ApiResponse<Announcement>>(`/admin/announcements/${id}/status`, { status });
+    const response = await patch<ApiResponse<Announcement>>(`/admin/announcements/${id}/status`, { status });
     return response.data;
 }
 

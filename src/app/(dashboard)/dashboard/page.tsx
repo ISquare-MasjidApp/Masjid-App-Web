@@ -208,7 +208,7 @@ export default function DashboardPage() {
       <div className="flex flex-col gap-[16px] items-center bg-[rgba(7,119,52,0.05)] p-[24px] rounded-[16px] w-full">
         <DateHeader
           gregorianDate={selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-          islamicDate={daysPrayerData?.hijriDate || '—'}
+          islamicDate={daysPrayerData?.hijriDay || daysPrayerData?.hijriDate || '—'}
           isToday={selectedDate.toDateString() === new Date().toDateString()}
           onPrevDay={handlePrevDay}
           onNextDay={handleNextDay}

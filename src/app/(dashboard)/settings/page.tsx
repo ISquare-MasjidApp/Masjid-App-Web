@@ -1,15 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import ContentSwitcher from '@/components/ui/ContentSwitcher';
-import { ChevronDownIcon } from '@/components/ui/Icons';
-import { getSettings, updateSettings, updatePaymentSettings, connectStripe, disconnectStripe, getStripeStatus } from '@/lib/api/settings';
+import { ChevronDownIcon, MapPinIcon, PlusIcon, EditIcon } from '@/components/ui/Icons';
+import { getSettings, updateSettings, updatePaymentSettings, saveStripeKeys, clearStripeKeys, getDonationCauses, createDonationCause, updateDonationCause, deleteDonationCause } from '@/lib/api/settings';
 import type {
   MasjidSettingsResponse,
   MasjidServices,
   MasjidFacilities,
-  StripeStatus,
+  StripeSettingsResponse,
 } from '@/types/settings';
 
 const Checkbox = ({
@@ -133,16 +132,120 @@ const Toast = ({ message, type, onClose }: { message: string; type: 'success' | 
 };
 
 function SettingsPageContent() {
-  const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<'masjid' | 'bank'>('masjid');
+  const [activeTab, setActiveTab] = useState<'masjid' | 'bank' | 'quick'>('masjid');
   const [loading, setLoading] = useState(true);
   const [savingInfo, setSavingInfo] = useState(false);
   const [savingServices, setSavingServices] = useState(false);
   const [savingPayment, setSavingPayment] = useState(false);
-  const [connectingStripe, setConnectingStripe] = useState(false);
-  const [disconnectingStripe, setDisconnectingStripe] = useState(false);
-  const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
+  const [savingKeys, setSavingKeys] = useState(false);
+  const [removingKeys, setRemovingKeys] = useState(false);
+  const [stripeStatus, setStripeStatus] = useState<StripeSettingsResponse | null>(null);
+  // Stripe key-entry form (secret + webhook secret are write-only; never pre-filled)
+  const [publishableKeyInput, setPublishableKeyInput] = useState('');
+  const [secretKeyInput, setSecretKeyInput] = useState('');
+  const [webhookSecretInput, setWebhookSecretInput] = useState('');
+  // Webhook endpoint URL to show the admin (derived from the current site origin, since the
+  // web app proxies /api/v1 to the backend). Computed on the client to avoid SSR issues.
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [editingKeys, setEditingKeys] = useState(false); // reveal the key form (after confirm) when already connected
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string; message: string; confirmLabel: string; danger?: boolean; onConfirm: () => void;
+  } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Donation Causes / Quick Settings state
+  const [causesList, setCausesList] = useState<{ name: string }[]>([]);
+  const [loadingCauses, setLoadingCauses] = useState(false);
+  const [isAddingCause, setIsAddingCause] = useState(false);
+  const [newCauseInput, setNewCauseInput] = useState('');
+  const [savingNewCause, setSavingNewCause] = useState(false);
+  const [editingCauseName, setEditingCauseName] = useState<string | null>(null);
+  const [editCauseInput, setEditCauseInput] = useState('');
+  const [savingEditCause, setSavingEditCause] = useState(false);
+  const [deletingCauseName, setDeletingCauseName] = useState<string | null>(null);
+  const [deletingCause, setDeletingCause] = useState(false);
+
+  const fetchDonationCauses = useCallback(async () => {
+    try {
+      setLoadingCauses(true);
+      const causes = await getDonationCauses();
+      const formatted = causes.map(name => ({ name }));
+      setCausesList(formatted);
+    } catch (err) {
+      console.error('Failed to load donation causes', err);
+      setToast({ message: 'Failed to load donation causes', type: 'error' });
+    } finally {
+      setLoadingCauses(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'quick') {
+      fetchDonationCauses();
+    }
+  }, [activeTab, fetchDonationCauses]);
+
+  const handleAddCauseSubmit = async () => {
+    if (!newCauseInput.trim()) {
+      setToast({ message: 'Please enter a cause name', type: 'error' });
+      return;
+    }
+    try {
+      setSavingNewCause(true);
+      const updatedCauses = await createDonationCause(newCauseInput.trim());
+      setCausesList(updatedCauses.map(name => ({ name })));
+      setNewCauseInput('');
+      setIsAddingCause(false);
+      setToast({ message: 'Donation cause added successfully', type: 'success' });
+    } catch (err) {
+      console.error('Failed to add donation cause:', err);
+      setToast({ message: (err instanceof Error ? err.message : undefined) ||'Failed to add donation cause', type: 'error' });
+    } finally {
+      setSavingNewCause(false);
+    }
+  };
+
+  const handleStartEditCause = (causeName: string) => {
+    setEditingCauseName(causeName);
+    setEditCauseInput(causeName);
+  };
+
+  const handleSaveEditCause = async () => {
+    if (!editingCauseName) return;
+    if (!editCauseInput.trim()) {
+      setToast({ message: 'Please enter a valid cause name', type: 'error' });
+      return;
+    }
+    try {
+      setSavingEditCause(true);
+      const updatedCauses = await updateDonationCause(editingCauseName, editCauseInput.trim());
+      setCausesList(updatedCauses.map(name => ({ name })));
+      setEditingCauseName(null);
+      setEditCauseInput('');
+      setToast({ message: 'Donation cause updated successfully', type: 'success' });
+    } catch (err) {
+      console.error('Failed to update donation cause:', err);
+      setToast({ message: (err instanceof Error ? err.message : undefined) ||'Failed to update donation cause', type: 'error' });
+    } finally {
+      setSavingEditCause(false);
+    }
+  };
+
+  const handleConfirmDeleteCause = async () => {
+    if (!deletingCauseName) return;
+    try {
+      setDeletingCause(true);
+      const updatedCauses = await deleteDonationCause(deletingCauseName);
+      setCausesList(updatedCauses.map(name => ({ name })));
+      setDeletingCauseName(null);
+      setToast({ message: 'Donation cause deleted successfully', type: 'success' });
+    } catch (err) {
+      console.error('Failed to delete donation cause:', err);
+      setToast({ message: (err instanceof Error ? err.message : undefined) ||'Failed to delete donation cause', type: 'error' });
+    } finally {
+      setDeletingCause(false);
+    }
+  };
 
   // Masjid details form state
   const [name, setName] = useState('');
@@ -154,6 +257,8 @@ function SettingsPageContent() {
   const [addressLine2, setAddressLine2] = useState('');
   const [city, setCity] = useState('');
   const [postcode, setPostcode] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
   const [mensCapacity, setMensCapacity] = useState('');
   const [womensCapacity, setWomensCapacity] = useState('');
   const [hasWomensArea, setHasWomensArea] = useState(false);
@@ -176,10 +281,9 @@ function SettingsPageContent() {
     wuduFacilities: false,
     washroom: false,
   });
-  const [wuduType, setWuduType] = useState<'Men' | 'Women' | 'Both' | ''>('');
 
   const [hasInfoData, setHasInfoData] = useState(false);
-  const [infoSnapshot, setInfoSnapshot] = useState({ name: '', about: '', phone: '', email: '', website: '', addressLine1: '', addressLine2: '', city: '', postcode: '' });
+  const [infoSnapshot, setInfoSnapshot] = useState({ name: '', about: '', phone: '', email: '', website: '', addressLine1: '', addressLine2: '', city: '', postcode: '', latitude: '', longitude: '' });
 
   const [hasServicesData, setHasServicesData] = useState(false);
   const [servicesSnapshot, setServicesSnapshot] = useState({
@@ -205,6 +309,8 @@ function SettingsPageContent() {
       addressLine2: data.address?.line2 || '',
       city: data.address?.city || '',
       postcode: data.address?.postcode || '',
+      latitude: data.location?.latitude?.toString() || '',
+      longitude: data.location?.longitude?.toString() || '',
     };
     const svc = {
       mensCapacity: data.capacity?.mens?.toString() || '',
@@ -218,6 +324,7 @@ function SettingsPageContent() {
     setEmail(info.email); setWebsite(info.website);
     setAddressLine1(info.addressLine1); setAddressLine2(info.addressLine2);
     setCity(info.city); setPostcode(info.postcode);
+    setLatitude(info.latitude); setLongitude(info.longitude);
     setMensCapacity(svc.mensCapacity); setWomensCapacity(svc.womensCapacity);
     setHasWomensArea(svc.hasWomensArea);
     setServices(svc.services); setFacilities(svc.facilities);
@@ -251,44 +358,106 @@ function SettingsPageContent() {
     fetchSettings();
   }, [fetchSettings]);
 
-  // Detect Stripe redirect back after onboarding
   useEffect(() => {
-    const stripeParam = searchParams.get('stripe');
-    if (stripeParam === 'connected') {
-      setActiveTab('bank');
-      setToast({ message: 'Stripe connected! Syncing account status...', type: 'success' });
-      getStripeStatus().then(setStripeStatus).catch(() => fetchSettings());
-    } else if (stripeParam === 'cancelled') {
-      setActiveTab('bank');
-      setToast({ message: 'Stripe connection cancelled.', type: 'error' });
-    }
-  }, [searchParams, fetchSettings]);
+    setWebhookUrl(`${window.location.origin}/api/v1/webhooks/stripe`);
+  }, []);
 
-  const handleConnectStripe = async () => {
+  const performSaveKeys = async (publishableKey: string, secretKey: string, webhookSecret: string) => {
+    setConfirmDialog(null);
     try {
-      setConnectingStripe(true);
-      const oauthUrl = await connectStripe();
-      window.location.href = oauthUrl;
+      setSavingKeys(true);
+      const status = await saveStripeKeys({
+        publishableKey,
+        secretKey,
+        webhookSecret: webhookSecret || undefined,
+      });
+      setStripeStatus(status);
+      // Never keep the secret / webhook secret around after saving.
+      setSecretKeyInput('');
+      setWebhookSecretInput('');
+      setPublishableKeyInput('');
+      setEditingKeys(false); // collapse the form back to the status view
+      setToast({ message: 'Stripe keys saved successfully', type: 'success' });
     } catch (err) {
-      console.error('Failed to connect Stripe:', err);
-      setToast({ message: 'Failed to start Stripe onboarding. Check configuration.', type: 'error' });
-      setConnectingStripe(false);
+      // Expected user-input error (e.g. bad key) — warn, don't console.error
+      // (console.error triggers Next.js's full-screen dev overlay).
+      console.warn('Failed to save Stripe keys:', err instanceof Error ? err.message : err);
+      setToast({ message: err instanceof Error ? err.message : 'Failed to save Stripe keys', type: 'error' });
+    } finally {
+      setSavingKeys(false);
     }
   };
 
-  const handleDisconnectStripe = async () => {
-    if (!window.confirm('Are you sure you want to disconnect Stripe? Donations will be disabled.')) return;
-    try {
-      setDisconnectingStripe(true);
-      await disconnectStripe();
-      setStripeStatus({ accountId: null, connected: false, onboardingComplete: false, acceptingDonations: false, payoutsEnabled: false });
-      setToast({ message: 'Stripe account disconnected.', type: 'success' });
-    } catch (err) {
-      console.error('Failed to disconnect Stripe:', err);
-      setToast({ message: 'Failed to disconnect Stripe.', type: 'error' });
-    } finally {
-      setDisconnectingStripe(false);
+  const handleSaveKeys = () => {
+    const publishableKey = publishableKeyInput.trim();
+    const secretKey = secretKeyInput.trim();
+    const webhookSecret = webhookSecretInput.trim();
+
+    // Client-side validation (backend enforces too, but fail fast for a better UX).
+    if (!publishableKey.startsWith('pk_')) {
+      setToast({ message: "Publishable key must start with 'pk_'", type: 'error' });
+      return;
     }
+    if (!(secretKey.startsWith('sk_') || secretKey.startsWith('rk_'))) {
+      setToast({ message: "Secret key must start with 'sk_' (or 'rk_' for a restricted key)", type: 'error' });
+      return;
+    }
+    if (webhookSecret && !webhookSecret.startsWith('whsec_')) {
+      setToast({ message: "Webhook signing secret must start with 'whsec_'", type: 'error' });
+      return;
+    }
+    const modeOf = (k: string) => (k.includes('_live_') ? 'live' : k.includes('_test_') ? 'test' : null);
+    const pubMode = modeOf(publishableKey);
+    const secMode = modeOf(secretKey);
+    if (pubMode && secMode && pubMode !== secMode) {
+      setToast({ message: `Publishable key (${pubMode}) and secret key (${secMode}) are from different modes`, type: 'error' });
+      return;
+    }
+    if ((pubMode ?? secMode) === 'live') {
+      setConfirmDialog({
+        title: 'Save LIVE Stripe keys?',
+        message: 'These are live keys — real payments will be processed. Make sure this is intentional.',
+        confirmLabel: 'Save Live Keys',
+        danger: true,
+        onConfirm: () => performSaveKeys(publishableKey, secretKey, webhookSecret),
+      });
+      return;
+    }
+    performSaveKeys(publishableKey, secretKey, webhookSecret);
+  };
+
+  const doRemoveKeys = async () => {
+    setConfirmDialog(null);
+    try {
+      setRemovingKeys(true);
+      await clearStripeKeys();
+      setStripeStatus({ connected: false, publishableKey: null, keyMode: null, webhookConfigured: false, keysUpdatedAt: null });
+      setToast({ message: 'Stripe keys removed.', type: 'success' });
+    } catch (err) {
+      console.warn('Failed to remove Stripe keys:', err instanceof Error ? err.message : err);
+      setToast({ message: err instanceof Error ? err.message : 'Failed to remove Stripe keys.', type: 'error' });
+    } finally {
+      setRemovingKeys(false);
+    }
+  };
+
+  const handleRemoveKeys = () => {
+    setConfirmDialog({
+      title: 'Remove Stripe keys?',
+      message: 'Donations will be disabled until keys are added again.',
+      confirmLabel: 'Remove Keys',
+      danger: true,
+      onConfirm: doRemoveKeys,
+    });
+  };
+
+  const handleStartEditKeys = () => {
+    setConfirmDialog({
+      title: 'Update Stripe keys?',
+      message: 'This replaces the keys currently in use. Donations may be interrupted until the new keys are saved and verified.',
+      confirmLabel: 'Continue',
+      onConfirm: () => { setConfirmDialog(null); setEditingKeys(true); },
+    });
   };
 
   // --- Masjid Information module ---
@@ -299,9 +468,10 @@ function SettingsPageContent() {
       phone !== infoSnapshot.phone || email !== infoSnapshot.email ||
       website !== infoSnapshot.website || addressLine1 !== infoSnapshot.addressLine1 ||
       addressLine2 !== infoSnapshot.addressLine2 || city !== infoSnapshot.city ||
-      postcode !== infoSnapshot.postcode
+      postcode !== infoSnapshot.postcode || latitude !== infoSnapshot.latitude ||
+      longitude !== infoSnapshot.longitude
     );
-  }, [hasInfoData, infoSnapshot, name, about, phone, email, website, addressLine1, addressLine2, city, postcode]);
+  }, [hasInfoData, infoSnapshot, name, about, phone, email, website, addressLine1, addressLine2, city, postcode, latitude, longitude]);
 
   const handleSaveInfo = async () => {
     if (!name.trim()) {
@@ -314,10 +484,11 @@ function SettingsPageContent() {
         name: name.trim(), about: about.trim() || null,
         address: { line1: addressLine1.trim() || null, line2: addressLine2.trim() || null, city: city.trim() || null, postcode: postcode.trim() || null, country: 'United Kingdom' },
         contact: { phone: phone.trim() || null, email: email.trim() || null, website: website.trim() || null },
+        location: { latitude: latitude ? parseFloat(latitude) : null, longitude: longitude ? parseFloat(longitude) : null },
         capacity: { mens: mensCapacity ? parseInt(mensCapacity) : null, womens: womensCapacity ? parseInt(womensCapacity) : null },
         services, facilities,
       });
-      const newSnap = { name: name.trim(), about: about.trim(), phone: phone.trim(), email: email.trim(), website: website.trim(), addressLine1: addressLine1.trim(), addressLine2: addressLine2.trim(), city: city.trim(), postcode: postcode.trim() };
+      const newSnap = { name: name.trim(), about: about.trim(), phone: phone.trim(), email: email.trim(), website: website.trim(), addressLine1: addressLine1.trim(), addressLine2: addressLine2.trim(), city: city.trim(), postcode: postcode.trim(), latitude: latitude.trim(), longitude: longitude.trim() };
       setInfoSnapshot(newSnap);
       setHasInfoData(true);
       setToast({ message: 'Masjid information saved successfully', type: 'success' });
@@ -334,6 +505,7 @@ function SettingsPageContent() {
     setEmail(infoSnapshot.email); setWebsite(infoSnapshot.website);
     setAddressLine1(infoSnapshot.addressLine1); setAddressLine2(infoSnapshot.addressLine2);
     setCity(infoSnapshot.city); setPostcode(infoSnapshot.postcode);
+    setLatitude(infoSnapshot.latitude); setLongitude(infoSnapshot.longitude);
   };
 
   // --- Services / Facilities / Capacity module ---
@@ -407,9 +579,10 @@ function SettingsPageContent() {
         tabs={[
           { id: 'masjid', label: 'Masjid Details' },
           { id: 'bank', label: 'Bank & Payment Settings' },
+          { id: 'quick', label: 'Quick Settings' },
         ]}
         activeTab={activeTab}
-        onChange={(id) => setActiveTab(id as 'masjid' | 'bank')}
+        onChange={(id) => setActiveTab(id as 'masjid' | 'bank' | 'quick')}
       />
 
       {/* Masjid Details Tab */}
@@ -449,6 +622,33 @@ function SettingsPageContent() {
                 <div className="flex gap-[24px]">
                   <SettingInput label="Town or City" value={city} onChange={setCity} />
                   <SettingInput label="Post Code" value={postcode} onChange={setPostcode} />
+                </div>
+                <div className="flex gap-[24px]">
+                  <SettingInput label="Latitude" placeholder="e.g. 51.5074" value={latitude} onChange={setLatitude} />
+                  <SettingInput label="Longitude" placeholder="e.g. 0.1278" value={longitude} onChange={setLongitude} />
+                </div>
+                <div className="flex justify-start">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if ('geolocation' in navigator) {
+                        navigator.geolocation.getCurrentPosition(
+                          (pos) => {
+                            setLatitude(pos.coords.latitude.toFixed(6));
+                            setLongitude(pos.coords.longitude.toFixed(6));
+                            setToast({ message: 'Current location fetched successfully', type: 'success' });
+                          },
+                          () => setToast({ message: 'Unable to retrieve location', type: 'error' })
+                        );
+                      } else {
+                        setToast({ message: 'Geolocation is not supported by your browser', type: 'error' });
+                      }
+                    }}
+                    className="h-[40px] px-[16px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#f6f6f6] transition-colors flex items-center gap-[8px] cursor-pointer"
+                  >
+                    <MapPinIcon size={16} className="text-[#667085]" />
+                    <span>Pick Location on Map</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -551,31 +751,11 @@ function SettingsPageContent() {
                   checked={facilities.shoeRacks}
                   onChange={(v) => setFacilities((f) => ({ ...f, shoeRacks: v }))}
                 />
-                <div className="flex flex-col gap-[10px]">
-                  <Checkbox
-                    label="Ablutions rooms"
-                    checked={facilities.wuduFacilities}
-                    onChange={(v) => {
-                      setFacilities((f) => ({ ...f, wuduFacilities: v }));
-                      if (!v) setWuduType('');
-                    }}
-                  />
-                  {facilities.wuduFacilities && (
-                    <div className="relative ml-[28px]">
-                      <select
-                        className="form-field h-[48px] appearance-none text-[14px] text-[#1f1f1f] font-inter font-medium"
-                        value={wuduType}
-                        onChange={(e) => setWuduType(e.target.value as 'Men' | 'Women' | 'Both')}
-                      >
-                        <option value="" disabled className="text-[#9ca3af]">Select access type</option>
-                        <option value="Men" className="text-[#1f1f1f] font-medium">Men</option>
-                        <option value="Women" className="text-[#1f1f1f] font-medium">Women</option>
-                        <option value="Both" className="text-[#1f1f1f] font-medium">Both</option>
-                      </select>
-                      <ChevronDownIcon size={16} className="absolute right-[12px] top-1/2 -translate-y-1/2 text-[var(--neutral-500)] pointer-events-none" />
-                    </div>
-                  )}
-                </div>
+                <Checkbox
+                  label="Ablutions rooms"
+                  checked={facilities.wuduFacilities}
+                  onChange={(v) => setFacilities((f) => ({ ...f, wuduFacilities: v }))}
+                />
                 <Checkbox
                   label="Washroom"
                   checked={facilities.washroom}
@@ -662,74 +842,160 @@ function SettingsPageContent() {
           <LoadingSkeleton />
         ) : (
           <div className="border border-[#e2e8f0] rounded-[24px] p-[24px] flex flex-col gap-[24px]">
-            <h2 className="font-inter font-semibold text-[20px] text-[#36394a]">BANK &amp; PAYMENT SETTINGS</h2>
-            <div className="h-[2px] bg-[#f6f6f6] rounded-[2px]" />
+            <div className="flex flex-col gap-[4px]">
+              <h2 className="font-inter font-bold text-[22px] text-[#1f1f1f] leading-none">Payment Settings</h2>
+              <p className="font-inter text-[14px] text-[#666d80]">Connect your Stripe account so the app can accept online donations.</p>
+            </div>
+            <div className="h-[1px] bg-[#eef1f4]" />
 
-            {/* Stripe Connect */}
+            {/* Stripe (Card Payments) */}
             <div className="flex gap-[24px]">
               <div className="flex flex-col gap-[8px] flex-1">
-                <h3 className="font-inter font-semibold text-[18px] text-[#36394a]">Stripe Connect</h3>
+                <h3 className="font-inter font-semibold text-[18px] text-[#36394a]">Stripe (Card Payments)</h3>
                 <p className="text-[14px] text-[#666d80] leading-[1.4] max-w-[300px]">
-                  Connect your Stripe account to accept online donations. Stripe handles all card payments, Apple Pay, and Google Pay securely.
+                  Enter your own Stripe account keys to accept online donations. Payments go directly into your Stripe account. The secret key is stored securely and is never shown again.
                 </p>
               </div>
-              <div className="flex-1">
+              <div className="flex-1 flex flex-col gap-[16px]">
+                {/* Current status */}
                 {stripeStatus?.connected ? (
-                  <div className="flex flex-col gap-[16px]">
-                    {/* Status badges */}
-                    <div className="flex flex-col gap-[10px]">
+                  <div className="flex flex-col gap-[14px] p-[18px] bg-white border border-[#e2e8f0] rounded-[14px] shadow-[0_1px_2px_rgba(16,24,40,0.05)]">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-[8px]">
-                        <div className={`w-[8px] h-[8px] rounded-full ${stripeStatus.acceptingDonations ? 'bg-[var(--brand)]' : 'bg-amber-400'}`} />
-                        <span className="font-inter text-[14px] text-[#4b4b4b]">
-                          Accepting Donations: <strong>{stripeStatus.acceptingDonations ? 'Enabled' : 'Pending'}</strong>
-                        </span>
+                        <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                          <circle cx="10" cy="10" r="9" fill="var(--brand)" />
+                          <path d="M6 10.5L9 13L14 7" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span className="font-inter font-semibold text-[15px] text-[#1f1f1f]">Connected</span>
                       </div>
-                      <div className="flex items-center gap-[8px]">
-                        <div className={`w-[8px] h-[8px] rounded-full ${stripeStatus.payoutsEnabled ? 'bg-[var(--brand)]' : 'bg-amber-400'}`} />
-                        <span className="font-inter text-[14px] text-[#4b4b4b]">
-                          Payouts to Bank: <strong>{stripeStatus.payoutsEnabled ? 'Enabled' : 'Pending'}</strong>
+                      {stripeStatus.keyMode && (
+                        <span className={`px-[10px] py-[3px] rounded-full font-inter font-semibold text-[11px] uppercase tracking-wider ${stripeStatus.keyMode === 'live' ? 'bg-[rgba(7,119,52,0.1)] text-[var(--brand)]' : 'bg-amber-100 text-amber-700'}`}>
+                          {stripeStatus.keyMode} mode
                         </span>
-                      </div>
-                      {!stripeStatus.onboardingComplete && (
-                        <p className="text-[13px] text-amber-600 bg-amber-50 px-[12px] py-[8px] rounded-[8px]">
-                          Onboarding incomplete — complete your Stripe setup to start accepting donations.
-                        </p>
                       )}
                     </div>
-                    {/* Actions */}
-                    <div className="flex gap-[12px]">
-                      {!stripeStatus.onboardingComplete && stripeStatus.connected && (
-                        <a
-                          href="https://dashboard.stripe.com/settings/account"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="h-[40px] px-[20px] bg-[var(--brand)] text-white rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#065d29] transition-colors flex items-center"
-                        >
-                          Complete Setup on Stripe
-                        </a>
-                      )}
-                      <button
-                        onClick={handleDisconnectStripe}
-                        disabled={disconnectingStripe}
-                        className="h-[40px] px-[20px] border border-red-200 text-red-600 rounded-[10px] font-inter font-medium text-[14px] hover:bg-red-50 transition-colors disabled:opacity-50"
-                      >
-                        {disconnectingStripe ? 'Disconnecting...' : 'Disconnect'}
-                      </button>
+                    <div className="h-[1px] bg-[#f1f5f9]" />
+                    <div className="flex items-center justify-between">
+                      <span className="font-inter text-[13px] text-[#666d80]">Webhook</span>
+                      <span className={`font-inter font-medium text-[13px] flex items-center gap-[6px] ${stripeStatus.webhookConfigured ? 'text-[var(--brand)]' : 'text-amber-600'}`}>
+                        <span className={`w-[7px] h-[7px] rounded-full ${stripeStatus.webhookConfigured ? 'bg-[var(--brand)]' : 'bg-amber-400'}`} />
+                        {stripeStatus.webhookConfigured ? 'Configured' : 'Not configured'}
+                      </span>
                     </div>
+                    {stripeStatus.keysUpdatedAt && (
+                      <div className="flex items-center justify-between">
+                        <span className="font-inter text-[13px] text-[#666d80]">Last updated</span>
+                        <span className="font-inter text-[13px] text-[#4b4b4b]">{new Date(stripeStatus.keysUpdatedAt).toLocaleString()}</span>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-[12px]">
-                    <div className="flex items-center gap-[8px]">
-                      <div className="w-[8px] h-[8px] rounded-full bg-gray-300" />
-                      <span className="font-inter text-[14px] text-[#666d80]">Not connected</span>
-                    </div>
+                  <div className="flex items-center gap-[10px] p-[16px] bg-[#f9fafb] border border-dashed border-[#e2e8f0] rounded-[14px]">
+                    <span className="w-[8px] h-[8px] rounded-full bg-gray-300 shrink-0" />
+                    <span className="font-inter text-[14px] text-[#666d80]">Not configured — add your Stripe keys to start accepting donations.</span>
+                  </div>
+                )}
+
+                {stripeStatus?.connected && !editingKeys ? (
+                  /* Connected: show actions; keep the key form hidden until the admin confirms an update */
+                  <div className="flex gap-[12px] pt-[4px]">
                     <button
-                      onClick={handleConnectStripe}
-                      disabled={connectingStripe}
-                      className="w-fit h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#065d29] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={handleStartEditKeys}
+                      className="h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#065d29] transition-colors"
                     >
-                      {connectingStripe ? 'Redirecting to Stripe...' : 'Connect Stripe Account'}
+                      Update Keys
                     </button>
+                    <button
+                      onClick={handleRemoveKeys}
+                      disabled={removingKeys}
+                      className="h-[44px] px-[20px] border border-red-200 text-red-600 rounded-[12px] font-inter font-medium text-[16px] hover:bg-red-50 transition-colors disabled:opacity-50"
+                    >
+                      {removingKeys ? 'Removing...' : 'Remove Keys'}
+                    </button>
+                  </div>
+                ) : (
+                  /* First-time setup, or editing after confirmation */
+                  <div className="flex flex-col gap-[12px]">
+                    {/* Webhook endpoint URL — shown only while configuring/updating keys */}
+                    <div className="flex flex-col gap-[8px]">
+                      <label className="font-inter font-semibold text-[14px] text-[#4b4b4b]">Webhook Endpoint URL</label>
+                      <div className="flex gap-[8px]">
+                        <input
+                          type="text"
+                          readOnly
+                          value={webhookUrl}
+                          onFocus={(e) => e.target.select()}
+                          className="form-field h-[48px] flex-1 bg-[#f9fafb] text-[#4b4b4b]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(webhookUrl);
+                            setToast({ message: 'Webhook URL copied', type: 'success' });
+                          }}
+                          className="h-[48px] px-[18px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[14px] hover:bg-[#f6f6f6] transition-colors shrink-0"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <p className="font-inter text-[12px] text-[#94a3b8] leading-[1.4]">
+                        Add this URL as a webhook endpoint in your Stripe Dashboard (Developers → Webhooks) for the events
+                        <code> payment_intent.succeeded</code>, <code> payment_intent.payment_failed</code> and
+                        <code> payment_intent.canceled</code>, then paste its signing secret below.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-[8px]">
+                      <label className="font-inter font-semibold text-[14px] text-[#4b4b4b]">Publishable Key</label>
+                      <input
+                        type="text"
+                        autoComplete="off"
+                        placeholder="pk_live_..."
+                        value={publishableKeyInput}
+                        onChange={(e) => setPublishableKeyInput(e.target.value)}
+                        className="form-field h-[48px]"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-[8px]">
+                      <label className="font-inter font-semibold text-[14px] text-[#4b4b4b]">Secret Key</label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="sk_live_..."
+                        value={secretKeyInput}
+                        onChange={(e) => setSecretKeyInput(e.target.value)}
+                        className="form-field h-[48px]"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-[8px]">
+                      <label className="font-inter font-semibold text-[14px] text-[#4b4b4b]">
+                        Webhook Signing Secret <span className="font-normal text-[#94a3b8]">(optional)</span>
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="whsec_..."
+                        value={webhookSecretInput}
+                        onChange={(e) => setWebhookSecretInput(e.target.value)}
+                        className="form-field h-[48px]"
+                      />
+                    </div>
+                    <div className="flex gap-[12px] pt-[4px]">
+                      <button
+                        onClick={handleSaveKeys}
+                        disabled={savingKeys}
+                        className="h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#065d29] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {savingKeys ? 'Saving...' : stripeStatus?.connected ? 'Update Keys' : 'Save Keys'}
+                      </button>
+                      {editingKeys && (
+                        <button
+                          onClick={() => { setEditingKeys(false); setPublishableKeyInput(''); setSecretKeyInput(''); setWebhookSecretInput(''); }}
+                          className="h-[44px] px-[20px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#f6f6f6] transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -737,6 +1003,245 @@ function SettingsPageContent() {
 
           </div>
         )
+      )}
+
+      {/* Quick Settings / Donation Causes Tab */}
+      {activeTab === 'quick' && (
+        loadingCauses ? (
+          <LoadingSkeleton />
+        ) : (
+          <div className="border border-[#e2e8f0] rounded-[24px] p-[24px] flex flex-col gap-[24px] bg-white">
+            {/* Header section */}
+            <div className="flex items-start justify-between gap-[16px]">
+              <div className="flex flex-col gap-[4px]">
+                <h2 className="font-inter font-semibold text-[20px] text-[#36394a]">Donation Cause</h2>
+                <p className="font-inter text-[15px] text-[#666d80]">
+                  Manage the donation categories displayed in the mobile application
+                </p>
+              </div>
+              {!isAddingCause && (
+                <button
+                  onClick={() => { setIsAddingCause(true); setNewCauseInput(''); }}
+                  className="h-[44px] px-[20px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[15px] hover:bg-[#065d29] transition-colors flex items-center gap-[8px] cursor-pointer shrink-0"
+                >
+                  <PlusIcon size={18} />
+                  <span>Add Cause</span>
+                </button>
+              )}
+            </div>
+
+            {/* Inline Add Cause Form (Image 3 Figma) */}
+            {isAddingCause && (
+              <div className="flex items-center gap-[12px] p-[16px] bg-[#f9fafb] border border-[#e2e8f0] rounded-[16px]">
+                <input
+                  type="text"
+                  placeholder="eg., Masjid Development"
+                  value={newCauseInput}
+                  onChange={(e) => setNewCauseInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddCauseSubmit()}
+                  className="form-field h-[48px] flex-1 text-[15px]"
+                  autoFocus
+                />
+                <button
+                  onClick={handleAddCauseSubmit}
+                  disabled={savingNewCause}
+                  className="h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[15px] hover:bg-[#065d29] transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {savingNewCause ? 'Adding...' : 'Add Cause'}
+                </button>
+                <button
+                  onClick={() => { setIsAddingCause(false); setNewCauseInput(''); }}
+                  disabled={savingNewCause}
+                  className="h-[44px] px-[20px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[15px] hover:bg-white transition-colors cursor-pointer shrink-0"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {/* Cause Items List */}
+            <div className="flex flex-col gap-[12px]">
+              {causesList.length === 0 ? (
+                <div className="text-center py-[48px] text-[#666d80] font-inter">
+                  No donation causes configured. Click &quot;+ Add Cause&quot; above to create one.
+                </div>
+              ) : (
+                causesList.map((item, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-[16px] border border-[#e2e8f0] rounded-[14px] bg-white hover:border-[#cbd5e1] transition-all"
+                  >
+                    {editingCauseName === item.name ? (
+                      /* Inline Edit Cause Form (Image 4 Figma) */
+                      <div className="flex items-center gap-[12px] w-full">
+                        <div className="text-[#94a3b8] cursor-grab shrink-0">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="9" cy="5" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="19" r="1" fill="currentColor"/>
+                            <circle cx="15" cy="5" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="19" r="1" fill="currentColor"/>
+                          </svg>
+                        </div>
+                        <input
+                          type="text"
+                          value={editCauseInput}
+                          onChange={(e) => setEditCauseInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSaveEditCause()}
+                          className="form-field h-[44px] flex-1 text-[15px]"
+                          autoFocus
+                        />
+                        <button
+                          onClick={handleSaveEditCause}
+                          disabled={savingEditCause}
+                          className="h-[40px] px-[20px] bg-[var(--brand)] text-white rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#065d29] transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                        >
+                          {savingEditCause ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => { setEditingCauseName(null); setEditCauseInput(''); }}
+                          disabled={savingEditCause}
+                          className="h-[40px] px-[16px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[10px] font-inter font-medium text-[14px] hover:bg-[#f6f6f6] transition-colors cursor-pointer shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      /* Row Display Mode (Image 2 Figma) */
+                      <>
+                        <div className="flex items-center gap-[16px]">
+                          {/* Drag Handle Icon :: */}
+                          <div className="text-[#94a3b8] cursor-grab select-none">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="9" cy="5" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="19" r="1" fill="currentColor"/>
+                              <circle cx="15" cy="5" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="19" r="1" fill="currentColor"/>
+                            </svg>
+                          </div>
+
+                          <span className="font-inter font-semibold text-[16px] text-[#1f1f1f]">
+                            {item.name}
+                          </span>
+
+                          <span className="px-[10px] py-[3px] bg-[rgba(7,119,52,0.1)] text-[var(--brand)] rounded-[6px] font-inter font-semibold text-[11px] uppercase tracking-wider select-none">
+                            ACTIVE
+                          </span>
+                        </div>
+
+                        {/* Right actions: Edit + Delete */}
+                        <div className="flex items-center gap-[12px]">
+                          <button
+                            onClick={() => handleStartEditCause(item.name)}
+                            className="p-[8px] text-[#667085] hover:text-[var(--brand)] hover:bg-[#f6f6f6] rounded-[8px] transition-colors cursor-pointer"
+                            title="Edit Cause"
+                          >
+                            <EditIcon size={18} />
+                          </button>
+
+                          <button
+                            onClick={() => setDeletingCauseName(item.name)}
+                            className="p-[8px] text-[#dc2626] hover:bg-[#fee2e2] rounded-[8px] transition-colors cursor-pointer"
+                            title="Delete Cause"
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6" />
+                            </svg>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Bottom Save / Discard bar */}
+            <div className="flex justify-end gap-[12px] pt-[8px] border-t border-[#f6f6f6]">
+              <button
+                onClick={() => fetchDonationCauses()}
+                className="h-[44px] px-[24px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#f6f6f6] transition-colors cursor-pointer"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => setToast({ message: 'Donation cause settings saved successfully', type: 'success' })}
+                className="h-[44px] px-[24px] bg-[var(--brand)] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#065d29] transition-colors cursor-pointer"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* Stripe key action confirmation modal */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.5)] p-4" onClick={() => setConfirmDialog(null)}>
+          <div className="bg-white rounded-[24px] p-[24px] max-w-[440px] w-full flex flex-col gap-[20px] shadow-xl animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-[16px]">
+              <div className={`w-[48px] h-[48px] rounded-full flex items-center justify-center shrink-0 ${confirmDialog.danger ? 'bg-[#fef2f2]' : 'bg-[rgba(7,119,52,0.08)]'}`}>
+                {confirmDialog.danger ? (
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                ) : (
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                )}
+              </div>
+              <h3 className="font-inter font-bold text-[20px] text-[#1f1f1f]">{confirmDialog.title}</h3>
+            </div>
+            <p className="font-inter text-[15px] text-[#666d80] leading-relaxed">{confirmDialog.message}</p>
+            <div className="flex items-center justify-end gap-[12px] pt-[8px]">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="h-[44px] px-[24px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#f6f6f6] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className={`h-[44px] px-[24px] text-white rounded-[12px] font-inter font-medium text-[16px] transition-colors ${confirmDialog.danger ? 'bg-[#dc2626] hover:bg-[#b91c1c]' : 'bg-[var(--brand)] hover:bg-[#065d29]'}`}
+              >
+                {confirmDialog.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Donation Cause Confirmation Modal (Image 5 Figma) */}
+      {deletingCauseName && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.5)] p-4">
+          <div className="bg-white rounded-[24px] p-[24px] max-w-[440px] w-full flex flex-col gap-[20px] shadow-xl animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-[16px]">
+              <div className="w-[48px] h-[48px] rounded-full bg-[#fef2f2] flex items-center justify-center shrink-0">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6" />
+                </svg>
+              </div>
+              <div className="flex flex-col gap-[4px]">
+                <h3 className="font-inter font-bold text-[20px] text-[#1f1f1f]">Delete Donation Cause</h3>
+              </div>
+            </div>
+            <p className="font-inter text-[15px] text-[#666d80] leading-relaxed">
+              Are you sure you want to delete <span className="font-semibold text-[#1f1f1f]">&apos;{deletingCauseName}&apos;</span>? This action cannot be undone and will remove the cause from the mobile application.
+            </p>
+            <div className="flex items-center justify-end gap-[12px] pt-[8px]">
+              <button
+                onClick={() => setDeletingCauseName(null)}
+                disabled={deletingCause}
+                className="h-[44px] px-[24px] border border-[#e2e8f0] text-[#4b4b4b] rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#f6f6f6] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDeleteCause}
+                disabled={deletingCause}
+                className="h-[44px] px-[24px] bg-[#dc2626] text-white rounded-[12px] font-inter font-medium text-[16px] hover:bg-[#b91c1c] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {deletingCause ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

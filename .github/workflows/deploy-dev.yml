@@ -28,6 +28,8 @@ jobs:
           file: ./Dockerfile.dev
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/masjid-app-frontend:dev-latest
+          build-args: |
+            BACKEND_API_URL=http://72.62.6.65:8080
 
   deploy:
     needs: build

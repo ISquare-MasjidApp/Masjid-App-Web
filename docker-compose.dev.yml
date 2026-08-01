@@ -5,3 +5,6 @@ services:
     restart: always
     ports:
       - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - BACKEND_API_URL=http://72.62.6.65:8080

@@ -1,4 +1,4 @@
-import { get, post, put, del, postFormData, putFormData } from './client';
+import { get, post, put, patch, del, postFormData, putFormData } from './client';
 import type { Event } from '@/types';
 import type { ApiResponse } from '@/types/api';
 
@@ -67,10 +67,10 @@ export async function updateEvent(id: string, formData: FormData): Promise<Event
 }
 
 /**
- * Publish a draft event
+ * Change status of an event (e.g. 'published', 'cancelled', 'draft', 'completed')
  */
 export async function changeEventStatus(id: string, status: string): Promise<Event> {
-    const response = await put<ApiResponse<Event>>(`/admin/events/${id}/publish`, {});
+    const response = await patch<ApiResponse<Event>>(`/admin/events/${id}/status`, { status });
     return response.data;
 }
 
@@ -78,7 +78,7 @@ export async function changeEventStatus(id: string, status: string): Promise<Eve
  * Cancel an event (soft-cancel — marks status as cancelled, preserves data).
  */
 export async function cancelEvent(id: string): Promise<void> {
-    await put<void>(`/admin/events/${id}/cancel`, {});
+    await patch<void>(`/admin/events/${id}/status`, { status: 'cancelled' });
 }
 
 /**

@@ -203,8 +203,22 @@ export default function PrayerManagementPage() {
     const activePrayer = getActivePrayer();
 
     /* ── hijri range for month header ── */
-    const firstHijri = monthlyPrayerTimes.length > 0 ? monthlyPrayerTimes[0]?.hijriDate : null;
-    const lastHijri = monthlyPrayerTimes.length > 1 ? monthlyPrayerTimes[monthlyPrayerTimes.length - 1]?.hijriDate : null;
+    const extractHijriMonthYear = (hijriStr?: string | null) => {
+        if (!hijriStr) return null;
+        // Remove leading day number (e.g. "16 Rabi-Al-Thani 1447" -> "Rabi-Al-Thani 1447")
+        const cleaned = hijriStr.replace(/^\d+\s*/, '').trim();
+        if (!cleaned) return hijriStr;
+        // Format space before year as ", Year" e.g. "Rabi-Al-Thani, 1447"
+        return cleaned.replace(/\s+(\d{4})$/, ', $1');
+    };
+
+    const firstHijri = monthlyPrayerTimes.length > 0
+        ? extractHijriMonthYear(monthlyPrayerTimes[0]?.hijriDay || monthlyPrayerTimes[0]?.hijriDate)
+        : null;
+    const lastHijri = monthlyPrayerTimes.length > 0
+        ? extractHijriMonthYear(monthlyPrayerTimes[monthlyPrayerTimes.length - 1]?.hijriDay || monthlyPrayerTimes[monthlyPrayerTimes.length - 1]?.hijriDate)
+        : null;
+
     const hijriRange = firstHijri && lastHijri && firstHijri !== lastHijri
         ? `${firstHijri} - ${lastHijri}`
         : firstHijri || '';
@@ -243,7 +257,7 @@ export default function PrayerManagementPage() {
             <div className="flex flex-col gap-[16px] items-center bg-[rgba(7,119,52,0.05)] p-[24px] rounded-[16px] w-full">
                 <DateHeader
                     gregorianDate={selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                    islamicDate={dailyPrayerTime?.hijriDate || ''}
+                    islamicDate={dailyPrayerTime?.hijriDay || dailyPrayerTime?.hijriDate || ''}
                     isToday={selectedDate.toDateString() === new Date().toDateString()}
                     onPrevDay={handlePrevDay}
                     onNextDay={handleNextDay}
