@@ -73,7 +73,6 @@ export interface Donation {
   campaignId: string;
   campaignTitle?: string;
   donorName?: string;
-  donorEmail?: string;
   isAnonymous: boolean;
   coverFee: boolean;
   amount: number;

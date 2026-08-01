@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Donation Flow Test Harness</title>
+  <!-- Stripe.js (browser SDK) — the web equivalent of the mobile Payment Sheet -->
+  <script src="https://js.stripe.com/v3/"></script>
+  <style>
+    :root { --brand: #077734; --border: #e2e8f0; --muted: #666d80; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; margin: 0; background: #f6f7f9; color: #1f1f1f; }
+    .wrap { max-width: 560px; margin: 40px auto; padding: 0 16px; }
+    .card { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 20px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+    h2 { font-size: 16px; margin: 0 0 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 6px; }
+    input, select { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
+    .row { display: flex; gap: 12px; }
+    .row > div { flex: 1; }
+    button { height: 44px; padding: 0 20px; background: var(--brand); color: #fff; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 16px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.secondary { background: #fff; color: #4b4b4b; border: 1px solid var(--border); }
+    .muted { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    #payment-element { margin-top: 8px; }
+    .breakdown { background: #f9fafb; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; font-size: 14px; margin-top: 12px; }
+    .breakdown div { display: flex; justify-content: space-between; padding: 3px 0; }
+    .breakdown .total { font-weight: 700; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; }
+    .status { padding: 12px 16px; border-radius: 10px; font-size: 14px; margin-top: 16px; display: none; }
+    .status.ok { background: rgba(7,119,52,.08); color: var(--brand); display: block; }
+    .status.err { background: #fef2f2; color: #dc2626; display: block; }
+    .status.info { background: #eff6ff; color: #1d4ed8; display: block; }
+    .hidden { display: none; }
+    code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Donation Flow — Test Harness</h1>
+    <p class="sub">Simulates the mobile app: creates a PaymentIntent on the charity's Stripe account, then confirms it with Stripe's Payment Element. Use test card <code>4242 4242 4242 4242</code>, any future expiry / CVC / postcode. To test the abandoned-payment case, create the PaymentIntent then hit <strong>Cancel donation</strong> (or <strong>Start over</strong>) — both void the PaymentIntent on Stripe and flip the donation to <code>failed</code> instead of leaving it pending.</p>
+
+    <!-- Step 1: config + create donation -->
+    <div class="card" id="step1">
+      <h2>1. Create donation</h2>
+      <label>Member API Key (X-API-KEY)</label>
+      <input id="apiKey" value="d4f8a1b2-7e3c-4f9a-b5d6-1a2b3c4d5e6f" />
+      <p class="muted">Default dev key from application.yml. Change if yours differs.</p>
+
+      <label>Campaign</label>
+      <select id="campaign"><option value="">Loading campaigns…</option></select>
+      <p class="muted" id="campaignHint"></p>
+
+      <label>Donor name</label>
+      <input id="donorName" value="Test Donor" />
+
+      <label>Amount (GBP)</label>
+      <input id="amount" type="number" value="10.00" min="1" step="0.01" />
+
+      <button id="createBtn">Create PaymentIntent</button>
+      <div class="status" id="step1Status"></div>
+    </div>
+
+    <!-- Step 2: pay -->
+    <div class="card hidden" id="step2">
+      <h2>2. Pay with card</h2>
+      <div class="breakdown" id="breakdown"></div>
+      <div id="payment-element"></div>
+      <button id="payBtn">Pay</button>
+      <button class="secondary" id="cancelBtn">Cancel donation</button>
+      <button class="secondary" id="resetBtn">Start over</button>
+      <div class="status" id="step2Status"></div>
+      <button class="secondary" id="statusBtn" style="display:none">Check donation status</button>
+      <div class="status" id="donationStatus"></div>
+    </div>
+  </div>
+
+  <script>
+    const API = '/api/v1'; // same-origin, proxied to the backend by Next
+    let stripe, elements, lastDonation, paid = false;
+
+    const $ = (id) => document.getElementById(id);
+    const headers = () => ({ 'Content-Type': 'application/json', 'X-API-KEY': $('apiKey').value.trim() });
+    function setStatus(el, msg, kind) { el.className = 'status ' + kind; el.textContent = msg; }
+
+    // Load selectable campaigns from the member API
+    async function loadCampaigns() {
+      try {
+        const res = await fetch(`${API}/member/campaigns?page=0&size=50`, { headers: headers() });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error?.message || 'Failed to load campaigns');
+        const list = body.data?.content || [];
+        const sel = $('campaign');
+        if (!list.length) {
+          sel.innerHTML = '<option value="">No active campaigns — create one in the admin app first</option>';
+          $('campaignHint').textContent = 'A donation needs an active campaign. Create/activate one under Campaigns in the admin app.';
+          return;
+        }
+        sel.innerHTML = list.map(c => `<option value="${c.id}">${(c.title || c.name || 'Campaign')} — ${c.id}</option>`).join('');
+      } catch (e) {
+        $('campaign').innerHTML = `<option value="">${e.message}</option>`;
+      }
+    }
+
+    $('createBtn').addEventListener('click', async () => {
+      const campaignId = $('campaign').value;
+      if (!campaignId) { setStatus($('step1Status'), 'Pick a campaign first.', 'err'); return; }
+      $('createBtn').disabled = true;
+      setStatus($('step1Status'), 'Creating PaymentIntent…', 'info');
+      try {
+        const res = await fetch(`${API}/member/campaigns/${campaignId}/donate`, {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({
+            donorName: $('donorName').value.trim(),
+            amount: parseFloat($('amount').value),
+            isAnonymous: false,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error?.message || 'Donation creation failed');
+        lastDonation = body.data;
+
+        // Mount Stripe's Payment Element with the returned publishable key + paymentToken (client secret)
+        stripe = Stripe(lastDonation.publishableKey);
+        elements = stripe.elements({ clientSecret: lastDonation.paymentToken });
+        elements.create('payment').mount('#payment-element');
+
+        $('breakdown').innerHTML = `
+          <div><span>Donation</span><span>£${lastDonation.amount}</span></div>
+          <div><span>Stripe fee (donor-covered)</span><span>£${lastDonation.processingFee}</span></div>
+          <div class="total"><span>Total charged</span><span>£${lastDonation.totalCharged}</span></div>`;
+        $('step1').classList.add('hidden');
+        $('step2').classList.remove('hidden');
+        setStatus($('step1Status'), '', 'info');
+      } catch (e) {
+        setStatus($('step1Status'), e.message, 'err');
+        $('createBtn').disabled = false;
+      }
+    });
+
+    $('payBtn').addEventListener('click', async () => {
+      $('payBtn').disabled = true;
+      setStatus($('step2Status'), 'Confirming payment…', 'info');
+      const { error, paymentIntent } = await stripe.confirmPayment({ elements, redirect: 'if_required' });
+      if (error) {
+        setStatus($('step2Status'), error.message, 'err');
+        $('payBtn').disabled = false;
+        return;
+      }
+      if (paymentIntent && paymentIntent.status === 'succeeded') {
+        paid = true;
+        $('cancelBtn').disabled = true; // can't cancel a paid donation
+        setStatus($('step2Status'), `✅ Payment succeeded (PaymentIntent ${paymentIntent.id}).`, 'ok');
+        $('statusBtn').style.display = 'inline-block';
+        setTimeout(checkDonationStatus, 1500); // give the webhook a moment
+      } else {
+        setStatus($('step2Status'), `PaymentIntent status: ${paymentIntent?.status}`, 'info');
+        $('payBtn').disabled = false;
+      }
+    });
+
+    // Explicit cancel — tests POST /member/donations/{id}/cancel and shows the donation flip to "failed".
+    $('cancelBtn').addEventListener('click', async () => {
+      if (!lastDonation || paid) return;
+      $('cancelBtn').disabled = true;
+      $('payBtn').disabled = true;
+      setStatus($('step2Status'), 'Cancelling donation…', 'info');
+      try {
+        const res = await fetch(`${API}/member/donations/${lastDonation.donationId}/cancel`, { method: 'POST', headers: headers() });
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(body?.error?.message || 'Cancel failed');
+        setStatus($('step2Status'), '🚫 Donation canceled (PaymentIntent voided on Stripe).', 'info');
+        $('statusBtn').style.display = 'inline-block';
+        setTimeout(checkDonationStatus, 800); // should now show "failed"
+      } catch (e) {
+        setStatus($('step2Status'), e.message, 'err');
+        $('cancelBtn').disabled = false;
+        $('payBtn').disabled = false;
+      }
+    });
+
+    // "Start over" mirrors the mobile app: if the donation is unpaid, cancel it on the backend first
+    // (so it doesn't linger as a pending/abandoned donation), then return to step 1.
+    $('resetBtn').addEventListener('click', async () => {
+      if (lastDonation && !paid) {
+        try { await fetch(`${API}/member/donations/${lastDonation.donationId}/cancel`, { method: 'POST', headers: headers() }); } catch (e) { /* best-effort */ }
+      }
+      lastDonation = null; paid = false;
+      $('step2').classList.add('hidden');
+      $('step1').classList.remove('hidden');
+      $('createBtn').disabled = false;
+      $('payBtn').disabled = false;
+      $('cancelBtn').disabled = false;
+      setStatus($('step2Status'), '', 'info');
+      $('donationStatus').className = 'status';
+      $('statusBtn').style.display = 'none';
+      $('payment-element').innerHTML = '';
+    });
+
+    async function checkDonationStatus() {
+      if (!lastDonation) return;
+      try {
+        const res = await fetch(`${API}/member/donations/${lastDonation.donationId}/status`, { headers: headers() });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error?.message || 'Failed to fetch status');
+        const s = body.data?.status || 'unknown';
+        const kind = s === 'completed' ? 'ok' : s === 'failed' ? 'err' : 'info';
+        const note = s === 'pending'
+          ? ' — waiting for the payment_intent.succeeded webhook (is `stripe listen` forwarding to the backend?)'
+          : '';
+        setStatus($('donationStatus'), `Donation status: ${s}${note}`, kind);
+      } catch (e) {
+        setStatus($('donationStatus'), e.message, 'err');
+      }
+    }
+    $('statusBtn').addEventListener('click', checkDonationStatus);
+
+    loadCampaigns();
+  </script>
+</body>
+</html>
