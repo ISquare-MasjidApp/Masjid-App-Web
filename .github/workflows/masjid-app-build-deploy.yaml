@@ -5,18 +5,16 @@ on:
     branches:
       - dev
       - main
+    # Documentation-only pushes do not rebuild the image or recreate
+    # containers. workflow_dispatch always forces a run.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
 
+  # No environment input: one environment, one VPS. The previous
+  # dev/staging/prod dropdown was decorative — the deploy ignored it.
   workflow_dispatch:
-    inputs:
-      environment:
-        description: "Select deployment environment"
-        required: true
-        default: "dev"
-        type: choice
-        options:
-          - dev
-          - staging
-          - prod
 
 jobs:
   build:
@@ -39,7 +37,9 @@ jobs:
           context: .
           file: ./Dockerfile.dev
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/masjid-app-frontend:dev-latest
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/masjid-app-frontend:dev-latest
+            ${{ secrets.DOCKER_USERNAME }}/masjid-app-frontend:${{ github.sha }}
           # Baked into the image at build time and consumed by next.config.ts
           # rewrites. Set a BACKEND_API_URL secret to override the default.
           build-args: |
@@ -54,12 +54,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Display Selected Environment
-        run: |
-          echo "Environment = ${{ github.event.inputs.environment }}"
-
       - name: Create application directory
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.DEV_EC2_HOST }}
           username: ${{ secrets.DEV_EC2_USERNAME }}
@@ -68,7 +64,7 @@ jobs:
             mkdir -p ~/masjid-frontend
 
       - name: Copy docker-compose
-        uses: appleboy/scp-action@master
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.DEV_EC2_HOST }}
           username: ${{ secrets.DEV_EC2_USERNAME }}
@@ -77,12 +73,14 @@ jobs:
           target: "~/masjid-frontend"
 
       - name: Deploy to Server
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.DEV_EC2_HOST }}
           username: ${{ secrets.DEV_EC2_USERNAME }}
           key: ${{ secrets.DEV_EC2_SSH_KEY }}
           script: |
+            set -eu
+
             cd ~/masjid-frontend
 
             export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
