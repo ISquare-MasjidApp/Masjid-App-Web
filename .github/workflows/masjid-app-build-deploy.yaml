@@ -5,6 +5,12 @@ on:
     branches:
       - dev
       - main
+    # Documentation-only pushes do not rebuild the image or recreate
+    # containers. workflow_dispatch always forces a run.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
 
   # No environment input: one environment, one VPS. The previous
   # dev/staging/prod dropdown was decorative — the deploy ignored it.
