@@ -5,6 +5,7 @@ import ModalCloseButton from '@/components/ui/ModalCloseButton';
 import TimePicker from '@/components/ui/TimePicker';
 import type { Event } from '@/types';
 import { createEvent, updateEvent } from '@/lib/api/events';
+import { messageOf, withRequestRef } from '@/lib/api/errors';
 
 interface AddEventModalProps {
     isOpen: boolean;
@@ -144,8 +145,8 @@ export default function AddEventModal({ isOpen, onClose, event, onDeleteRequest 
                 await createEvent(formData);
             }
             onClose(); // Parent will refresh data on close
-        } catch (err: any) {
-            setError(err?.message || "An error occurred while saving the event.");
+        } catch (err) {
+            setError(withRequestRef(messageOf(err, 'An error occurred while saving the event.'), err));
             console.error('Failed to save event:', err);
         } finally {
             setIsSaving(false);

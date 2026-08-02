@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { getPrayerTimes, deletePrayerTime } from '@/lib/api/prayer-times';
+import { withRequestRef } from '@/lib/api/errors';
 import UpdatePrayerTimeModal from '@/components/prayer-management/UpdatePrayerTimeModal';
 import Skeleton from '@/components/ui/Skeleton';
 import { ChevronRightIcon } from '@/components/ui/Icons';
@@ -122,7 +123,7 @@ export default function PrayerManagementPage() {
             const result = await getPrayerTimes({ startDate, endDate, size: 31 });
             setMonthlyPrayerTimes(result.content);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to load prayer times');
+            setError(withRequestRef(err instanceof Error ? err.message : 'Failed to load prayer times', err));
         } finally {
             setLoadingMonthly(false);
         }

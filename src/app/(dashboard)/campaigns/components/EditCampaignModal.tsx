@@ -7,6 +7,7 @@ import { ChevronDownIcon, EditIcon } from '@/components/ui/Icons';
 import ModalCloseButton from '@/components/ui/ModalCloseButton';
 import Input from '@/components/ui/Input';
 import { updateCampaign } from '@/lib/api/campaigns';
+import { withRequestRef } from '@/lib/api/errors';
 import type { Campaign } from '@/types';
 
 interface EditCampaignModalProps {
@@ -77,8 +78,8 @@ export default function EditCampaignModal({ isOpen, onClose, campaign, onUpdated
       });
       onUpdated?.(updated);
       handleClose();
-    } catch {
-      setError('Failed to update campaign. Please try again.');
+    } catch (err) {
+      setError(withRequestRef('Failed to update campaign. Please try again.', err));
     } finally {
       setSubmitting(false);
     }

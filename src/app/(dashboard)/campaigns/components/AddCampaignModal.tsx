@@ -6,6 +6,7 @@ import { ChevronDownIcon, MegaphoneIcon } from '@/components/ui/Icons';
 import ModalCloseButton from '@/components/ui/ModalCloseButton';
 import Input from '@/components/ui/Input';
 import { createCampaign } from '@/lib/api/campaigns';
+import { withRequestRef } from '@/lib/api/errors';
 
 interface AddCampaignModalProps {
   isOpen: boolean;
@@ -55,8 +56,8 @@ export default function AddCampaignModal({ isOpen, onClose, onCreated }: AddCamp
       });
       onCreated?.();
       handleClose();
-    } catch {
-      setError('Failed to save draft. Please try again.');
+    } catch (err) {
+      setError(withRequestRef('Failed to save draft. Please try again.', err));
     } finally {
       setSubmitting(false);
     }
@@ -77,8 +78,8 @@ export default function AddCampaignModal({ isOpen, onClose, onCreated }: AddCamp
       });
       onCreated?.();
       handleClose();
-    } catch {
-      setError('Failed to create campaign. Please try again.');
+    } catch (err) {
+      setError(withRequestRef('Failed to create campaign. Please try again.', err));
       setStep('form');
     } finally {
       setSubmitting(false);

@@ -55,7 +55,7 @@ export default function TimePicker({
     className = '',
 }: TimePickerProps) {
     const [isOpen, setIsOpen] = useState(false);
-    const [inputValue, setInputValue] = useState('');
+    const [inputValue, setInputValue] = useState(() => formatDisplay(value));
     const [error, setError] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const hourListRef = useRef<HTMLDivElement>(null);
@@ -63,12 +63,19 @@ export default function TimePicker({
 
     const { h, m, p } = parseTime(value);
 
-    // Sync display when value changes externally
-    useEffect(() => {
+    // Sync the display when `value` changes externally, and normalise partial
+    // input ("1:") back to a formatted time once the dropdown closes. Guarded
+    // against the previous render's inputs rather than run from an effect:
+    // React re-runs the component immediately without committing the
+    // intermediate DOM, so there is no flash of stale text.
+    // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+    const [lastSync, setLastSync] = useState({ value, isOpen });
+    if (lastSync.value !== value || lastSync.isOpen !== isOpen) {
+        setLastSync({ value, isOpen });
         if (!isOpen) {
             setInputValue(formatDisplay(value));
         }
-    }, [value, isOpen]);
+    }
 
     // Scroll a list so the selected item is centered
     const scrollToSelected = useCallback((listRef: React.RefObject<HTMLDivElement | null>, selectedIndex: number) => {

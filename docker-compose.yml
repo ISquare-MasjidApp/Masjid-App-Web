@@ -1,21 +1,51 @@
+# Single environment, single VPS — this is the only compose file for the web app.
+#
+# Consolidated from the former docker-compose.dev.yml, which despite the name
+# was the file that actually deployed. The old docker-compose.yml was a
+# local-only variant that bind-mounted ./ over /app; that is deliberately gone,
+# because on the VPS there is no source tree to mount and it would have
+# shadowed the built application.
+
 services:
-  frontend:
+  app:
+    # `image` is what the VPS pulls. `build` is here so `docker compose build`
+    # or `up --build` still works locally against the same tag.
+    image: ${DOCKER_USERNAME}/masjid-app-frontend:${FRONTEND_TAG:-dev-latest}
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: masjid-frontend-dev
-    ports:
-      - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/.next
-    environment:
-      - NODE_ENV=development
-      - BACKEND_API_URL=http://masjid-backend-dev:8080
-    networks:
-      - masjid-app-backend_masjid-network
+      args:
+        BACKEND_API_URL: ${BACKEND_API_URL:-https://api.masjid-app.isquaretechsolutions.com}
 
-networks:
-  masjid-app-backend_masjid-network:
-    external: true
+    container_name: masjid-frontend
+    restart: always
+
+    ports:
+      # Must stay bound to 0.0.0.0, not loopback: the backend stack's nginx
+      # reaches this container through host.docker.internal (the Docker bridge
+      # gateway), which cannot see a service bound only to 127.0.0.1.
+      - "3000:3000"
+
+    environment:
+      - NODE_ENV=production
+      # Consumed by next.config.ts rewrites for server-side calls. Browser
+      # calls go straight to this host from the page, so this mainly covers SSR
+      # and local development.
+      #
+      # No port — nginx terminates TLS on the api subdomain and forwards to the
+      # backend container. Replaced a direct http://<ip>:8080 that bypassed
+      # nginx entirely.
+      - BACKEND_API_URL=${BACKEND_API_URL:-https://api.masjid-app.isquaretechsolutions.com}
+
+    # No network block: this container is reached by nginx over the host
+    # gateway, and it reaches the backend over the public api subdomain, so it
+    # does not need to share a Docker network with the backend stack.
+
+    # Caps the on-disk json-file buffer. Without this the frontend's logs grow
+    # unbounded; Alloy has already shipped them to Loki, which keeps the full
+    # history. See docs/logging.md in the backend repo.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

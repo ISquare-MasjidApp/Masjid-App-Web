@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/Icons';
 import { getNotifications } from '@/lib/api/notifications';
 import type { Notification } from '@/lib/api/notifications';
+import { withRequestRef } from '@/lib/api/errors';
 
 // ============================================
 // Icon + style helpers
@@ -218,8 +219,8 @@ export default function NotificationDrawer({
       );
       setNotifications(sorted);
       onLoad?.(sorted);
-    } catch {
-      setError('Failed to load notifications.');
+    } catch (err) {
+      setError(withRequestRef('Failed to load notifications.', err));
     } finally {
       setLoading(false);
     }

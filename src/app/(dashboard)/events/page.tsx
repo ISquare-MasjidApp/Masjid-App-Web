@@ -22,7 +22,9 @@ import AddAnnouncementModal from '@/components/dashboard/AddAnnouncementModal';
 import AnnouncementViewModal from '@/components/dashboard/AnnouncementViewModal';
 import EventDetailsModal from '@/components/dashboard/EventDetailsModal';
 import { getEvents, cancelEvent, deleteEvent, changeEventStatus } from '@/lib/api/events';
+import type { GetEventsParams } from '@/lib/api/events';
 import { getAnnouncements, deleteAnnouncement, changeAnnouncementStatus } from '@/lib/api/announcements';
+import type { GetAnnouncementsParams } from '@/lib/api/announcements';
 
 // Date/Time helper functions
 function formatDate(isoString: string) {
@@ -66,14 +68,23 @@ function statusToConfirmType(status: string | undefined): EventConfirmType {
 type TimeFilterOption = 'ALL' | 'Upcoming' | 'Ongoing' | 'Past';
 const EVENT_TIME_OPTIONS: TimeFilterOption[] = ['ALL', 'Upcoming', 'Ongoing', 'Past'];
 
+const EVENT_STATUS_FILTERS = ['All', 'Published', 'Draft', 'Cancelled', 'Completed'] as const;
+type EventStatusFilter = (typeof EVENT_STATUS_FILTERS)[number];
+
+/**
+ * An Event plus the display-only fields derived in fetchEvents — the backend
+ * returns neither, but the table renders both.
+ */
+type EventRow = EventType & { timeStatus?: string };
+
 export default function EventsPage() {
     const [activeTab, setActiveTab] = useState<'events' | 'announcements'>('events');
     const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
 
     // --- Events State ---
-    const [events, setEvents] = useState<EventType[]>([]);
+    const [events, setEvents] = useState<EventRow[]>([]);
     const [eventsLoading, setEventsLoading] = useState(false);
-    const [activeFilter, setActiveFilter] = useState<'All' | 'Published' | 'Draft' | 'Cancelled' | 'Completed'>('All');
+    const [activeFilter, setActiveFilter] = useState<EventStatusFilter>('All');
     const [searchQuery, setSearchQuery] = useState('');
     const [eventsPage, setEventsPage] = useState(1);
     const [eventsPagination, setEventsPagination] = useState({ totalPages: 1, totalElements: 0, size: 10 });
@@ -124,9 +135,9 @@ export default function EventsPage() {
         setEventsLoading(true);
         try {
             // Determine status filter parameter based on UI activeFilter
-            let statusParam;
-            let upcomingParam;
-            let pastParam;
+            let statusParam: GetEventsParams['status'];
+            let upcomingParam: boolean | undefined;
+            let pastParam: boolean | undefined;
 
             if (activeFilter === 'Draft') statusParam = 'draft';
             if (activeFilter === 'Published') statusParam = 'published';
@@ -141,7 +152,7 @@ export default function EventsPage() {
                 page: eventsPage - 1, // backend is 0-indexed
                 size: 10,
                 search: searchQuery || undefined,
-                status: statusParam as any,
+                status: statusParam,
                 upcoming: upcomingParam,
                 past: pastParam,
             });
@@ -187,7 +198,7 @@ export default function EventsPage() {
     const fetchAnnouncements = useCallback(async () => {
         setAnnouncementsLoading(true);
         try {
-            let statusParam;
+            let statusParam: GetAnnouncementsParams['status'];
             if (announcementFilter === 'Scheduled') statusParam = 'scheduled';
             if (announcementFilter === 'Drafts') statusParam = 'draft';
             if (announcementFilter === 'Sent') statusParam = 'sent';
@@ -196,7 +207,7 @@ export default function EventsPage() {
                 page: announcementsPage - 1, // backend is 0-indexed
                 size: 10,
                 search: announcementSearchQuery || undefined,
-                status: statusParam as any,
+                status: statusParam,
             });
 
             const processedAnnouncements = response.content.map(ann => ({
@@ -388,7 +399,7 @@ export default function EventsPage() {
         const q = searchQuery.trim().toLowerCase();
         return (
             event.title?.toLowerCase().includes(q) ||
-            (event as any).speaker?.toLowerCase().includes(q) ||
+            event.speaker?.toLowerCase().includes(q) ||
             event.venue?.toLowerCase().includes(q)
         );
     });
@@ -443,10 +454,10 @@ export default function EventsPage() {
                             {/* Controls */}
                             <div className="flex justify-between items-center mb-[24px] h-[40px]">
                                 <div className="flex items-center">
-                                    {['All', 'Published', 'Draft', 'Cancelled', 'Completed'].map((filter, index, arr) => (
+                                    {EVENT_STATUS_FILTERS.map((filter, index, arr) => (
                                         <button
                                             key={filter}
-                                            onClick={() => { setActiveFilter(filter as any); setEventsPage(1); }}
+                                            onClick={() => { setActiveFilter(filter); setEventsPage(1); }}
                                             className={`
                                         h-[40px] px-[16px] py-[10px] font-inter text-[14px] 
                                         border border-[var(--border-01)]
@@ -583,7 +594,7 @@ export default function EventsPage() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-none bg-white">
-                                            {displayEvents.map((event: any) => (
+                                            {displayEvents.map((event) => (
                                                 <tr key={event.id} className="group hover:bg-[#fafbfb] transition-colors duration-150 border-b border-[#e2e8f0] last:border-0">
                                                     <td className="h-[70px] px-[16px] py-[14px] font-['Inter'] font-medium text-[14px] text-[#666d80]">
                                                         {event.title}

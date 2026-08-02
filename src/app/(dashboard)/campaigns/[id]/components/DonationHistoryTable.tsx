@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from '@/components/ui/Icons';
 import { getCampaignDonations } from '@/lib/api/campaigns';
+import type { Donation } from '@/types';
 
 interface DonationRow {
   id: string;
@@ -10,13 +11,16 @@ interface DonationRow {
   amount: string;
   date: string;
   method: string;
-  status: 'completed' | 'failed' | 'pending';
+  // Mirrors Donation['status'] so every status the backend can return is
+  // renderable — 'refunded' was previously missing.
+  status: Donation['status'];
 }
 
 const STATUS_LABEL: Record<string, string> = {
   completed: 'Successful',
   failed: 'Failed',
   pending: 'Pending',
+  refunded: 'Refunded',
 };
 
 const StatusPill = ({ status }: { status: DonationRow['status'] }) => {
@@ -24,6 +28,7 @@ const StatusPill = ({ status }: { status: DonationRow['status'] }) => {
     completed: { border: 'border-[#6bc497]', text: 'text-[#47b881]' },
     failed:    { border: 'border-[#eb6f70]', text: 'text-[#f64c4c]' },
     pending:   { border: 'border-[#ffc62b]', text: 'text-[#ffad0d]' },
+    refunded:  { border: 'border-[#cbd5e1]', text: 'text-[#667085]' },
   };
   const { border, text } = styles[status] ?? { border: 'border-[#e2e8f0]', text: 'text-[#667085]' };
   return (
@@ -46,8 +51,7 @@ export default function DonationHistoryTable({ campaignId }: { campaignId: strin
     setLoading(true);
     try {
       const result = await getCampaignDonations(campaignId, { page, size: pageSize });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rows: DonationRow[] = (result.content as any[]).map((d) => ({
+      const rows: DonationRow[] = result.content.map((d) => ({
         id: d.id,
         name: d.isAnonymous ? 'Anonymous' : (d.donorName ?? '—'),
         amount: `£${Number(d.totalCharged ?? d.amount).toLocaleString()}`,

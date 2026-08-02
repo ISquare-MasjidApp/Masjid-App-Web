@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import ForgotPasswordModal from '@/components/auth/ForgotPasswordModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { ApiError } from '@/lib/api/client';
+import { withRequestRef } from '@/lib/api/errors';
 import type { LoginFormData, LoginFormErrors } from '@/types';
 
 export default function LoginPage() {
@@ -58,7 +59,7 @@ export default function LoginPage() {
           });
         } else {
           // General errors (invalid credentials, account locked, etc.)
-          setErrors({ general: error.message });
+          setErrors({ general: withRequestRef(error.message, error) });
         }
       } else {
         setErrors({ general: 'An error occurred. Please try again.' });

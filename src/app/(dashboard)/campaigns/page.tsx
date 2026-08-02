@@ -5,6 +5,7 @@ import { ActivityPulseIcon, UsersIcon, PoundIcon, StarIcon, PlusIcon } from '@/c
 import CampaignTable from './components/CampaignTable';
 import AddCampaignModal from './components/AddCampaignModal';
 import { getCampaignStats } from '@/lib/api/campaigns';
+import { messageOf } from '@/lib/api/errors';
 import type { CampaignStats } from '@/lib/api/campaigns';
 
 export default function CampaignsPage() {
@@ -15,8 +16,8 @@ export default function CampaignsPage() {
   useEffect(() => {
     getCampaignStats()
       .then(setStats)
-      .catch((err: any) => {
-        console.warn('Campaign stats unavailable:', err?.message || err);
+      .catch((err: unknown) => {
+        console.warn('Campaign stats unavailable:', messageOf(err, String(err)));
       });
   }, [tableKey]);
 
