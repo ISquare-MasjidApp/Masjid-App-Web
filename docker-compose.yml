@@ -15,34 +15,31 @@ services:
       context: .
       dockerfile: Dockerfile.dev
       args:
-        BACKEND_API_URL: ${BACKEND_API_URL:-http://72.62.6.65:8080}
+        BACKEND_API_URL: ${BACKEND_API_URL:-https://api.masjid-app.isquaretechsolutions.com}
 
     container_name: masjid-frontend
     restart: always
 
     ports:
+      # Must stay bound to 0.0.0.0, not loopback: the backend stack's nginx
+      # reaches this container through host.docker.internal (the Docker bridge
+      # gateway), which cannot see a service bound only to 127.0.0.1.
       - "3000:3000"
 
     environment:
       - NODE_ENV=production
-      # Consumed by next.config.ts rewrites to proxy /api/v1/* to the backend.
-      # Currently the VPS public IP, so requests leave and re-enter the host.
-      # To keep it internal instead, join the backend's network (see below) and
-      # set this to http://masjid-backend:8080.
-      - BACKEND_API_URL=${BACKEND_API_URL:-http://72.62.6.65:8080}
+      # Consumed by next.config.ts rewrites for server-side calls. Browser
+      # calls go straight to this host from the page, so this mainly covers SSR
+      # and local development.
+      #
+      # No port — nginx terminates TLS on the api subdomain and forwards to the
+      # backend container. Replaced a direct http://<ip>:8080 that bypassed
+      # nginx entirely.
+      - BACKEND_API_URL=${BACKEND_API_URL:-https://api.masjid-app.isquaretechsolutions.com}
 
-    # No network block on purpose: the frontend reaches the backend over the
-    # public IP above, so it does not need to share a Docker network. To switch
-    # to internal DNS, uncomment below and confirm the name with
-    # `docker network ls | grep masjid` — it is <backend-project>_masjid-network.
-    #
-    # networks:
-    #   - masjid-network
-    #
-    # networks:
-    #   masjid-network:
-    #     external: true
-    #     name: masjid-app_masjid-network
+    # No network block: this container is reached by nginx over the host
+    # gateway, and it reaches the backend over the public api subdomain, so it
+    # does not need to share a Docker network with the backend stack.
 
     # Caps the on-disk json-file buffer. Without this the frontend's logs grow
     # unbounded; Alloy has already shipped them to Loki, which keeps the full

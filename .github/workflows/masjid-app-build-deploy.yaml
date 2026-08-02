@@ -43,7 +43,7 @@ jobs:
           # Baked into the image at build time and consumed by next.config.ts
           # rewrites. Set a BACKEND_API_URL secret to override the default.
           build-args: |
-            BACKEND_API_URL=${{ secrets.BACKEND_API_URL || 'http://72.62.6.65:8080' }}
+            BACKEND_API_URL=${{ secrets.BACKEND_API_URL || 'https://api.masjid-app.isquaretechsolutions.com' }}
 
   deploy:
     needs: build
